@@ -9,9 +9,8 @@ import (
 	"time"
 
 	"codebase/internal/constant/key"
-
-	"logger/logger"
-	"monitor/monitor"
+	"codebase/pkg/logger"
+	"codebase/pkg/monitor"
 
 	"github.com/go-resty/resty/v2"
 )

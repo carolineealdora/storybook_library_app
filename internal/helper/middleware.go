@@ -10,8 +10,7 @@ import (
 	"time"
 
 	"codebase/models"
-
-	"shared/shared"
+	"codebase/pkg/shared"
 
 	"github.com/labstack/echo/v4"
 )

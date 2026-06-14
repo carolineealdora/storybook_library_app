@@ -6,8 +6,7 @@ import (
 
 	"codebase/internal/repositories/healthcheck"
 	"codebase/models"
-
-	"shared/shared"
+	"codebase/pkg/shared"
 )
 
 type (

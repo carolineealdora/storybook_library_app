@@ -4,9 +4,8 @@ import (
 	"os"
 
 	"codebase/models"
-
-	"persistent/sql/sql"
-	"tools/migrations/postgres"
+	sql "codebase/pkg/orm"
+	"codebase/pkg/migrator/postgres"
 )
 
 var (

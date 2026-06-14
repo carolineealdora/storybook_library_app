@@ -11,11 +11,10 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 
 	"codebase/config"
-
-	" logger/implementations/logrus"
-	" logger/logger"
-	" persistent/sql/implementations/gorm/postgres"
-	" persistent/sql/sql"
+	"codebase/pkg/logger"
+	"codebase/pkg/logger/logrus"
+	sql "codebase/pkg/orm"
+	"codebase/pkg/orm/postgres"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"

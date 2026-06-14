@@ -7,7 +7,7 @@ import (
 	"codebase/models"
 	sql_mock "codebase/test/mock/sql"
 
-	"shared/shared"
+	"codebase/pkg/shared"
 )
 
 func Test_repo_Ping(t *testing.T) {

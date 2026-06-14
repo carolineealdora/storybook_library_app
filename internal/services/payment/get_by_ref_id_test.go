@@ -11,7 +11,7 @@ import (
 	helper_mocks "codebase/test/mock/helper"
 	repository_mock "codebase/test/mock/repository"
 
-	"shared/shared"
+	"codebase/pkg/shared"
 
 	"gorm.io/gorm"
 )

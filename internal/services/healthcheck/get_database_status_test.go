@@ -8,7 +8,7 @@ import (
 	"codebase/models"
 	repository_mock "codebase/test/mock/repository"
 
-	"shared/shared"
+	"codebase/pkg/shared"
 )
 
 func Test_service_GetDatabaseStatus(t *testing.T) {

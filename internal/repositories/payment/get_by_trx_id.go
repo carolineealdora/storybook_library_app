@@ -2,8 +2,7 @@ package payment
 
 import (
 	"codebase/models"
-
-	" persistent/sql/sql"
+	sql "codebase/pkg/orm"
 
 	"gorm.io/gorm"
 )
