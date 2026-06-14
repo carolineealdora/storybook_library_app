@@ -8,8 +8,8 @@ import (
 	"codebase/models"
 	sql_mock "codebase/test/mock/sql"
 
-	sql " persistent/sql/sql"
-	" shared/shared"
+	sql "codebase/pkg/orm"
+	"codebase/pkg/shared"
 )
 
 func Test_repo_GetByRefId(t *testing.T) {

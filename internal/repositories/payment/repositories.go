@@ -4,8 +4,7 @@ import (
 	"time"
 
 	"codebase/models"
-
-	" shared/shared"
+	"codebase/pkg/shared"
 )
 
 type (

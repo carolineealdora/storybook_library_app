@@ -6,8 +6,7 @@ import (
 	helpers "codebase/internal/helper"
 	"codebase/internal/repositories/payment"
 	"codebase/models"
-
-	"shared/shared"
+	"codebase/pkg/shared"
 )
 
 type (

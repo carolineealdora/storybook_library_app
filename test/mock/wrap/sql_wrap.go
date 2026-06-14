@@ -3,8 +3,8 @@ package wrap_test
 import (
 	"context"
 
-	"monitor/monitor"
-	"persistent/sql/sql"
+	"codebase/pkg/monitor"
+	sql "codebase/pkg/orm"
 )
 
 type ORMWrapperMock interface {
