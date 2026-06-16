@@ -35,3 +35,9 @@ Thumbs.db
 .env
 *.out
 tmp/*
+
+# Claude workspace
+.claude/sessions/
+.claude/todos/
+.claude/cache
+*.jsonl
