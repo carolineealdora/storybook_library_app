@@ -495,31 +495,36 @@ flowchart TD
 
 ### 12.1 Architecture
 
+> **As built.** §12.2–12.4 are the design written before the build. The implemented contracts are in each backend's `docs/API-contracts.md` and in `docs/DATA-MODELS.md` (storybook_management_app). Changes made during the build: two backends instead of one (below); CR-001 added `subscription_plan_price_history` and `409 PRICE_CHANGED`; payment and settings routes need a parent token (`X-Parent-Token`) issued by login, PIN or Forgot PIN; library lists are paginated (`page`, `page_size`); Forgot PIN locks for 1 minute after 4 wrong passwords.
+
 ```mermaid
 flowchart LR
-    subgraph Clients
-        L["Digital Storybook Library app<br/>(Lovable) - Parent & Child view"]
-        M["Book Management app<br/>(Lovable) - Admin"]
+    subgraph Clients["Frontends (React + Vite, built with Claude Code)"]
+        L["Digital Storybook Library app<br/>fe_storybook_library_app<br/>Parent & Child view"]
+        M["Book Management app<br/>fe_storybook_management_app<br/>Admin"]
     end
-    subgraph API["Backend API (Go)"]
-        H["Handler<br/>HTTP, input validation,<br/>JWT and role check"]
-        S["Service<br/>access check, single-book checkout,<br/>mocked payment, subscription lifecycle"]
-        R["Repository<br/>reads and writes PostgreSQL"]
-        J["Scheduler<br/>daily auto-renew job (mocked)"]
-        H --> S --> R
-        J --> S
+    subgraph LA["storybook_library_app (Go)"]
+        LH["Handler → Service → Repository<br/>parent auth, PIN, showcase, access check,<br/>orders, mocked payment, subscriptions"]
+        LJ["Renewal job<br/>hourly, mocked, always succeeds"]
     end
-    DB[("PostgreSQL<br/>app data + book files<br/>(EPUB and covers)")]
-    L -->|REST + JWT| H
-    M -->|REST + JWT| H
-    R --> DB
+    subgraph MA["storybook_management_app (Go)"]
+        MH["Handler → Service → Repository<br/>admin auth, book CRUD + uploads,<br/>plan price + price history"]
+        MM["Migrations + seed<br/>owns the schema"]
+    end
+    DB[("PostgreSQL 16<br/>one shared database<br/>app data + EPUB and covers")]
+    L -->|REST + JWT| LH
+    M -->|REST + JWT, same origin| MH
+    LH --> DB
+    LJ --> DB
+    MH --> DB
+    MM -.->|schema| DB
 ```
 
-- **Handler** — receives HTTP requests, validates input, checks JWT and role (parent / admin, from `credentials.account_type`).
-- **Service** — business rules: access check, single-book checkout, mocked payment, subscription lifecycle.
-- **Repository** — reads and writes PostgreSQL, including book files.
-- **Scheduler** — daily job that auto-renews active, non-cancelled subscriptions on their renewal date (mocked, always succeeds).
-- **Access check order:** book exists & published → free → purchased → active subscription → locked.
+- **One backend per frontend** (ADR-011). Each backend logs in only its own account type, and `/auth/refresh` rejects the other app's tokens, so a parent cannot reach admin routes and an admin cannot reach parent routes.
+- **One shared database** (ADR-010). storybook_management_app owns the migrations; the library backend runs none. The admin backend writes books, covers, the plan and its price history; the library backend writes PINs and lockouts, orders, purchases and subscriptions.
+- **Layers in each backend:** Handler (bind and validate input, JWT and role check, map errors to codes) → Service (every PRD rule) → Repository (SQL and transactions).
+- **Renewal job** runs only in storybook_library_app, every hour. It renews active, non-cancelled subscriptions whose period has ended, at the current plan price (mocked, always succeeds).
+- **Access check order:** book exists & published → free → purchased → active subscription → locked. A purchased book stays readable after it is unpublished or deleted (E5).
 - Locked content is never sent to the client; the EPUB is streamed from the database only after the access check passes.
 
 ### 12.2 Data Model
@@ -654,7 +659,7 @@ erDiagram
 
 ### 12.3 API Endpoints
 
-**Digital Storybook Library app**
+**Digital Storybook Library app** (served by storybook_library_app)
 
 | Method | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
@@ -680,7 +685,7 @@ erDiagram
 | POST | `/subscriptions/current/cancel` | User | Cancel active subscription; access stops immediately |
 | GET | `/subscriptions` | User | Subscription History (periods with their subscription orders) |
 
-**Book Management app**
+**Book Management app** (served by storybook_management_app)
 
 | Method | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
@@ -752,14 +757,21 @@ erDiagram
 | PRD review | Claude | Check draft for inconsistencies and unclear points | Cart had quantity for digital books; no parent gate on view toggle; subscription vs purchase rules unclear; unfinished sentences | Removed quantity; added PIN on Child → Parent switch; added “Subscribed” rule and no-expiry rule for purchases |
 | Translation & structure | Claude | Translate Indonesian notes to English and restructure feature list | Mixed languages; repeated lock rules in both views | Rewrote in English; grouped shared rules under Global Layout |
 | Scope | Claude | Build in-scope and out-of-scope feature lists | Sign-up, forgot password, and book management were missing | Decided sign-up/forgot password are out of scope; added Master Book and Subscription Configuration to scope |
-| PRD sections 7–18 | Claude | Draft user stories, edge cases, flows, design, metrics, roadmap, risks from my notes | [ ] | [ ] |
+| PRD sections 7–18 | Claude | Draft user stories, edge cases, flows, design, metrics, roadmap, risks from my notes | The draft still had a cart, left open questions (cancellation, PIN setup, age range, settings scope, file storage) and used one `orders` table and one `users` table for everyone | Fixed in the next three rows |
 | Remove cart | Claude | Update PRD so parents buy books one at a time | Cart was referenced in user stories, edge cases, flows, data model, API, metrics, and risks | Replaced cart with single-book Buy Now; added subscription prompt on book detail; updated all related sections |
 | Apply open-question answers | Claude | Update PRD with my answers, move my trade-off notes into section 11, convert flows and system design to Mermaid | Cancellation, PIN setup, age range format, settings scope, and file storage were affected across many sections | Updated user stories, edge cases, API, data model, risks; removed Open Questions; added Mermaid diagrams |
 | Data model changes | Claude | Split login data, users/admins, and book/subscription orders; keep only covers in `book_files` | Combined `orders` table and shared `users` table mixed parents, admins, and login data | Added `credentials`, `admins`, `book_orders`, `subscription_orders`; moved EPUB into `books`; updated API, stories, metrics, risks |
-| Backend scaffold | Claude Code | Build the Go backend for this PRD on the provided scaffold (Echo + Postgres); then harden the PIN gate, add pagination, limit Forgot PIN tries | Scaffold carried Redis, Mongo and a sample payment module, and a request logger that wrote passwords and tokens to logs; its error type returned an empty message; migrations ran in random order. Review found the PIN only gated the UI (a child with the parent's session could call payment endpoints), lists had no pagination, and Forgot PIN allowed unlimited password guesses | Removed unused infra and the body logger; fixed the error type and migration order; payment and settings routes now need a parent token issued only by login, PIN or Forgot PIN; added `page`/`page_size` with totals; Forgot PIN locks for 1 minute after 4 wrong passwords; every edge case E1–E22 is tested (E20 in unit tests, the rest end-to-end over HTTP against Postgres) |
-| Frontend | [Lovable] | [ ] | [ ] | [ ] |
+| Management backend | Claude Code | “Based on the PRD and the scaffold in this folder, create me the backend service.” The project rules in CLAUDE.md made it write a plan first (`PLAN.md`, decisions D1–D10 that I approved), write failing tests before code, commit tests and code separately, run `make done` before every commit and log every shortcut in `tech-debt.md` | Planning found scaffold bugs: `Makefile` was a directory, migrations ran in random order (Go map iteration), a listed migration file was missing, a request logger wrote passwords and tokens to Mongo, and every route required an unrelated `x-partner-id` header | Fixed all of them in Phase 0 before any feature work; shortcuts logged as TD-1…TD-10; services have 88–94% test coverage and repositories are tested against a real Postgres |
+| Library backend | Claude Code | Same prompt for the parent app; then “what can we do next? is this all?” and I chose items from its gap list: harden the PIN gate, add pagination, limit Forgot PIN tries | The scaffold carried Redis, Mongo and a sample payment module, and a request logger that wrote passwords and tokens to logs; its error type returned an empty message; migrations ran in random order. Review found the PIN only gated the UI (a child with the parent's session could call payment endpoints), lists had no pagination, and Forgot PIN allowed unlimited password guesses | Removed unused infra and the body logger; fixed the error type and migration order; payment and settings routes now need a parent token issued only by login, PIN or Forgot PIN; added `page`/`page_size` with totals; Forgot PIN locks for 1 minute after 4 wrong passwords; every edge case E1–E22 is tested (E20 in unit tests, the rest end-to-end over HTTP against Postgres) |
+| Change request CR-001 | Claude Code | “CR-001 is a change request on top of the existing implementation. Before writing code: list every file, table, endpoint and UI screen that changes, flag conflicts with the code or PRD, propose a new migration, and wait for my approval” | 10 conflicts (C1–C10), e.g. CR-001 asked for a manual renew endpoint while the PRD auto-renews (C1), and what happens when the admin changes the price during a parent's checkout (C7) | I kept the mocked auto-renew and approved the rest as recommended: price history written in the same transaction as the price change, `expected_price` with `409 PRICE_CHANGED` at checkout and pay, Subscribed / Free badge |
+| Shared database | Claude Code | “Both backends should use the same database, so the migrations must stay in sync. The management app owns the schema; merge in the library app's changes. Write the plan” | Migration ids never matched; the library had columns (Forgot PIN lockout), a case-insensitive email index and FK indexes the owner lacked; it seeded demo accounts through a migration | One schema in storybook_management_app with the library changes merged in (ADR-010); seed accounts come from env vars; demo passwords left in git history are logged as TD-011 |
+| One backend per app | Claude Code | “fe_storybook_management_app calls this backend and fe_storybook_library_app calls storybook_library_app”: plan first, then implement | Review of both repos: each backend still served the other app's endpoints, so a parent could log in on the admin backend and pay without the parent token or the Forgot PIN lockout; a refresh token from either backend worked on the other | Each backend serves only its own frontend and refreshes only its own account type (ADR-011); a route test checks auth on every route |
+| Simpler tooling | Claude Code | “Remove CI, pre-commit hooks and extra lint/secret-scan tooling, and every mention of them from the instruction files. Find everything first and wait for my OK” | CI, pre-commit and golangci-lint were more setup than a short MVP needs, and the instruction files referred to gates that would no longer exist | One local gate, `make done` (vet, tests, build), before every commit; integration tests run locally with `make test-integration` |
+| Frontends (both apps) | Claude Design → Claude Code | Designed both apps as one design system from the PRD in Claude Design, then: “Import this Claude Design project (`MainStory Apps.dc.html`) and create the storybook library app for parent and kids” (and “… the management app for admin”), following a frontend CLAUDE.md | The agent could not read the design project, so I added the handoff .zip to `docs/design`; the admin app was first scaffolded in Next.js, which I didn't want; code review and Playwright e2e found an EPUB that failed silently, a book table that overflowed on phones, and notices that screen readers didn't announce | Retried from the local handoff; asked for React only, so it was rebuilt as a Vite + React Router single-page app; fixed each finding; added nginx + Docker hosting with security headers and CSP, Vitest unit tests and Playwright e2e against the real backend |
 
-**What I kept human-owned:** business rules (monthly-only subscription, one-book-at-a-time purchase to push subscriptions, no buying while subscribed, purchased books never expire, PIN gate, auto-renew, immediate cancellation, age range format, DB file storage), scope decisions, edge-case decisions, and review of access logic.
+**What I kept human-owned:** business rules (monthly-only subscription, one-book-at-a-time purchase to push subscriptions, no buying while subscribed, purchased books never expire, PIN gate, auto-renew, immediate cancellation, age range format, DB file storage), scope decisions, edge-case decisions, and review of access logic. I also approved every plan before code was written (D1–D10, C1–C10, S1–S7, R1–R8) and made the call to split into one backend per app.
+
+**How I steered Claude Code:** the CLAUDE.md rules (plan first, TDD, `make done` before every commit, tech-debt log, security rules) load in every session; each feature started as a written plan I annotated and approved; after each feature I asked “what else can we do?” and picked from its gap list.
 
 ---
 
