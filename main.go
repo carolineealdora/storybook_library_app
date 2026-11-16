@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -9,7 +8,6 @@ import (
 
 	"codebase/handler"
 	"codebase/internal/services/subscription"
-	"codebase/migrations"
 	"codebase/models"
 )
 
@@ -21,8 +19,8 @@ func main() {
 
 	if len(args) > 1 {
 		switch args[1] {
-		case "migrate":
-			migrate(shared, args)
+		case "migrate": // ponytail: schema is owned by storybook_management_app (its ADR-010)
+			fmt.Println("migrations live in ../storybook_management_app: run `make migrate` there")
 			return
 		case "run":
 		default:
@@ -31,52 +29,6 @@ func main() {
 		}
 	}
 	run(&shared)
-}
-
-func migrate(shared models.SharedHolder, args []string) {
-	if len(args) < 3 {
-		shared.Log.Error("usage: migrate up | down [name] | create <name>")
-		return
-	}
-	migrator := migrations.NewMigration(shared)
-	switch args[2] {
-	case "up":
-		err := migrator.Up()
-		if err != nil {
-			shared.Log.Error(err)
-			return
-		}
-	case "down":
-		var err error
-		if len(args) <= 3 || len(args[3]) == 0 {
-			reader := bufio.NewReader(os.Stdin)
-			fmt.Print("[WARNING] Rollback All Migrations? (Y/N) ")
-			char, _, _ := reader.ReadRune()
-			if char == 'y' || char == 'Y' {
-				err = migrator.Down("")
-			} else {
-				return
-			}
-		} else {
-			err = migrator.Down(args[3])
-		}
-		if err != nil {
-			shared.Log.Error(err)
-			return
-		}
-	case "create":
-		if len(args) <= 3 || len(args[3]) == 0 {
-			shared.Log.Error("please input new migration name")
-			return
-		}
-
-		err := migrator.Create(args[3])
-		if err != nil {
-			shared.Log.Error(err)
-			return
-		}
-	default:
-	}
 }
 
 func run(shared *models.SharedHolder) {
