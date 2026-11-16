@@ -3,10 +3,11 @@
 
 ## Conventions
 
-- JSON in, JSON out (except file endpoints and the admin book form, see below).
+- JSON in, JSON out (except the cover and EPUB file endpoints).
 - Success: `{ "data": ... }` with HTTP 200.
 - Error: `{ "error": { "code": "BOOK_LOCKED", "message": "Subscribe or purchase this book to read it." } }`. Branch on `code`, show `message`.
-- Auth: `Authorization: Bearer <access_token>`. Parent tokens only work on Library routes, admin tokens only on `/admin/*` routes (otherwise `403 FORBIDDEN`).
+- Auth: `Authorization: Bearer <access_token>` from a **parent** account. An admin token gets `403 FORBIDDEN`.
+- This backend serves only `fe_storybook_library_app`. The back office (admin login, books, plan pricing) is storybook_management_app; see its `docs/API-contracts.md` (ADR-011).
 - Money is integer IDR (`15000` = Rp 15.000). Timestamps are RFC 3339.
 - IDs are UUIDs. A malformed `:id` returns `400 VALIDATION_ERROR`.
 - Lists take `?page=1&page_size=20` (defaults; `page_size` max 100) and return `{ "data": [...], "meta": { "total": 42, "page": 1, "page_size": 20 } }`.
@@ -15,6 +16,7 @@
 1. `POST /auth/login` returns an `access_token` (30 min) and a `refresh_token` (7 days, not rotated).
 2. On `401 TOKEN_EXPIRED`, call `POST /auth/refresh` with the refresh token, then retry the request.
 3. On `401 REFRESH_TOKEN_EXPIRED` or `401 UNAUTHORIZED`, send the user to Login.
+4. Only parent refresh tokens work here. An admin refresh token (the table is shared with the back office) gets `401 UNAUTHORIZED`.
 
 ### Parent view token (US-03)
 Routes marked **🔒P** below also need `X-Parent-Token: <parent_token>`.
@@ -32,9 +34,6 @@ Created by `make seed` in storybook_management_app from its `SEED_PARENT_*` and 
 | HTTP | Code | When |
 |---|---|---|
 | 400 | `VALIDATION_ERROR` | Missing/invalid field (message names the field) |
-| 400 | `INVALID_FILE_FORMAT` | Cover not .jpg/.jpeg/.png, or book not .epub |
-| 400 | `INVALID_AGE_RANGE` | Age not a whole number, or min ≥ max |
-| 400 | `INVALID_PRICE` | Subscription plan price ≤ 0 (CR-001) |
 | 401 | `INVALID_CREDENTIALS` | Wrong email or password ("Email or password is incorrect") |
 | 401 | `UNAUTHORIZED` | No/invalid token, or revoked refresh token |
 | 401 | `TOKEN_EXPIRED` | Access token expired → refresh |
@@ -42,7 +41,7 @@ Created by `make seed` in storybook_management_app from its `SEED_PARENT_*` and 
 | 401 | `INVALID_PIN` / `INVALID_PASSWORD` | Wrong PIN / wrong account password |
 | 403 | `PARENT_MODE_REQUIRED` | 🔒P route called without a valid parent token → show the PIN prompt |
 | 402 | `PAYMENT_FAILED` | Mocked payment failed. The order is `failed`; retry with a **new** order |
-| 403 | `FORBIDDEN` | Wrong account type for this app/route |
+| 403 | `FORBIDDEN` | Admin account on this app (login or token) |
 | 403 | `BOOK_LOCKED` | Book content requested without access |
 | 404 | `BOOK_NOT_FOUND` / `ORDER_NOT_FOUND` / `NOT_FOUND` | Missing, unpublished, or not yours |
 | 409 | `PRICE_CHANGED` | Subscription `expected_price` ≠ current plan price → re-read the plan, ask the parent to confirm again (CR-001) |
@@ -53,7 +52,7 @@ Created by `make seed` in storybook_management_app from its `SEED_PARENT_*` and 
 ## Shapes
 
 ```jsonc
-// Book (list, detail, my books, admin)
+// Book (list, detail, my books)
 { "id": "uuid", "title": "Si Kancil", "author": "…", "description": "…",
   "age_type": "range",          // "range" | "plus"
   "age_min": 1, "age_max": 3,   // age_max null when "plus"
@@ -90,10 +89,6 @@ Created by `make seed` in storybook_management_app from its `SEED_PARENT_*` and 
     "next_renewal_price": 59000, // current plan price = what the next auto-renewal charges
     "price_change_pending": true // next_renewal_price ≠ price_paid → show the price-change notice
   } }
-
-// PlanPriceChange (admin price history)
-{ "id": "uuid", "old_price": 49000, "new_price": 59000,
-  "changed_by": "uuid", "changed_by_name": "…", "changed_at": "…" }
 ```
 
 **Account badge (CR-001-1):** show **Subscribed** when `plan_status = "subscribed"`, otherwise **Free**, in the header of both views. Read `plan_status`; fall back to `is_subscriber` if absent. Re-fetch `/me` after a successful subscription payment or cancel so the badge changes without a reload. Purchased books never change the badge.
@@ -136,23 +131,3 @@ Created by `make seed` in storybook_management_app from its `SEED_PARENT_*` and 
 **Images and EPUB need the bearer header**, so `<img src>` won't work directly. Fetch them as a blob and use `URL.createObjectURL`.
 
 **Mocked payment:** the client chooses the outcome with `result`. Give the Checkout page "Pay (success)" and "Pay (fail)" controls for the test.
-
-## Book Management app (admin token)
-
-| Method | Path | Body | Returns |
-|---|---|---|---|
-| POST | `/admin/auth/login` *(public)* | `{email, password}` | same as `/auth/login` without `parent_token`. Parent accounts get `403 FORBIDDEN` |
-| POST | `/admin/auth/logout` | `{refresh_token}` | `{logged_out: true}` |
-| GET | `/admin/books?search=&status=&page=&page_size=` | — | `Book[]`: non-deleted books. `search` matches title, `status` is `draft`/`published` |
-| GET | `/admin/books/:id` | — | `Book` |
-| GET | `/admin/books/:id/cover` | — | image bytes |
-| POST | `/admin/books` | multipart form ↓ | `Book` |
-| PUT | `/admin/books/:id` | multipart form ↓ (files optional) | `Book` |
-| DELETE | `/admin/books/:id` | — | `{deleted: true}` (soft delete) |
-| GET | `/admin/subscription-plan` | — | `SubscriptionPlan` |
-| PUT | `/admin/subscription-plan` | `{price, benefits}` | `SubscriptionPlan`. `price` ≤ 0 → `400 INVALID_PRICE`. A price change is logged in the history; the same price is a no-op |
-| GET | `/admin/subscription-plan/history?page=&page_size=` | — | `PlanPriceChange[]`, newest first |
-
-**Subscription Plan page (CR-001-2):** show the current price, the edit form and the history. Before saving a new price, confirm: *"New subscribers will pay Rp [new] immediately. Existing subscribers will pay Rp [new] from their next renewal."* Existing subscribers keep `price_paid` until `expires_at`; the automatic renewal then charges the price current at that moment.
-
-**Book form (`multipart/form-data`):** `title`, `author`, `description`, `age_type` (`range` \| `plus`), `age_min`, `age_max` (range only), `price` (whole number ≥ 0), `status` (`draft` \| `published`), file `cover` (.jpg/.jpeg/.png, ≤ 5 MB), file `epub` (.epub, ≤ 50 MB). On PUT every text field is required. Omit a file to keep the current one.

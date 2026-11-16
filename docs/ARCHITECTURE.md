@@ -6,10 +6,9 @@
 
 ## System purpose
 
-This Go API is called by the **Digital Storybook Library** frontend (`fe_storybook_library_app`). It also still implements the admin endpoints below, but the Book Management frontend (`fe_storybook_management_app`) calls storybook_management_app, which owns the shared schema:
+This Go API serves only the **Digital Storybook Library** frontend (`fe_storybook_library_app`), for parent accounts: browse the showcase, buy single books, subscribe monthly, read EPUBs. It has a Parent view and a Child view; switching from Child to Parent view needs a PIN.
 
-- **Digital Storybook Library** (parent account): browse the showcase, buy single books, subscribe monthly, read EPUBs. Has a Parent view and a Child view; switching from Child to Parent view needs a PIN.
-- **Book Management** (admin account): book CRUD with EPUB and cover upload, subscription plan price and benefits.
+The **Book Management** back office (admin login, book CRUD with uploads, plan pricing) is storybook_management_app, served to `fe_storybook_management_app`. It owns the shared PostgreSQL schema and its migrations (ADR-011).
 
 Login and payment are mocked for the MVP (PRD §3).
 
@@ -31,23 +30,24 @@ Login and payment are mocked for the MVP (PRD §3).
 ## System boundaries
 
 ```
-┌──────────────────────────────┐   ┌──────────────────────────────┐
-│ Library app (Lovable)        │   │ Book Management (Lovable)    │
-│ parent token on Parent view  │   │ admin token                  │
-└──────────────┬───────────────┘   └──────────────┬───────────────┘
-               │ HTTPS / REST /api/v1             │
-┌──────────────▼──────────────────────────────────▼───────────────┐
-│ Go API                                                         │
-│ handler/  → auth middleware, binding, JSON responses           │
-│ internal/services/  → access rules, checkout, PIN, renewals    │
-│ internal/repositories/library  → SQL, transactions             │
-│ main.go → hourly RunRenewals goroutine                         │
-└──────────────────────────────┬─────────────────────────────────┘
-                               │
-                     ┌─────────▼─────────┐
-                     │ PostgreSQL        │
-                     │ data + EPUB/cover │
-                     └───────────────────┘
+┌──────────────────────────────┐        ┌──────────────────────────────┐
+│ Library app (Lovable)        │        │ Book Management (Lovable)    │
+│ parent token on Parent view  │        │ admin token                  │
+└──────────────┬───────────────┘        └──────────────┬───────────────┘
+               │ HTTPS / REST /api/v1                  │
+┌──────────────▼─────────────────────┐  ┌──────────────▼───────────────┐
+│ This Go API (parent routes only)   │  │ storybook_management_app     │
+│ handler/  → auth, binding, JSON    │  │ admin routes, owns schema    │
+│ internal/services/  → access rules,│  │ and migrations               │
+│   checkout, PIN, renewals          │  └──────────────┬───────────────┘
+│ internal/repositories/library → SQL│                 │
+│ main.go → hourly RunRenewals       │                 │
+└──────────────┬─────────────────────┘                 │
+               └──────────────┬─────────────────────────┘
+                    ┌─────────▼─────────┐
+                    │ PostgreSQL        │
+                    │ data + EPUB/cover │
+                    └───────────────────┘
 ```
 
 No external services. Payment is a client-chosen outcome (`result: success|failed`).
@@ -70,7 +70,7 @@ There is one repository package on purpose: paying an order touches orders, purc
 
 | Token | Lifetime | Where | Proves |
 |---|---|---|---|
-| Access (JWT) | 30 min | `Authorization: Bearer` | Who you are, and whether it's a parent or admin account |
+| Access (JWT) | 30 min | `Authorization: Bearer` | Who you are. Only parent accounts get one here |
 | Refresh (opaque, SHA-256 in DB) | 7 days, not rotated | `POST /auth/refresh` body | Session; revoked on logout |
 | Parent (JWT, role `parent_mode`) | 7 days | `X-Parent-Token` header | That this is Parent view. Issued on login, correct PIN and Forgot PIN. Refresh never issues one. |
 

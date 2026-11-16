@@ -1,7 +1,7 @@
 # Data Models — Storybook Library
 **Last updated:** 2026-11-16
 
-**Source of truth is the SQL in [`storybook_management_app/migrations/`](../../storybook_management_app/migrations/)**, which owns the schema this app shares (its ADR-010). This page explains the model. Read the migration before writing a query. The ER diagram is in the [PRD §12.2](PRD_storybook-lib-app.md).
+**Source of truth is the SQL in [`storybook_management_app/migrations/`](../../storybook_management_app/migrations/)**, which owns the schema this app shares (its ADR-010). This app writes `users`, `book_orders`, `purchases`, `subscription_orders` and `subscriptions`, plus its own parent `credentials` / `refresh_tokens` rows. Books, covers, the plan and its price history are written by the back office (ADR-011). This page explains the model. Read the migration before writing a query. The ER diagram is in the [PRD §12.2](PRD_storybook-lib-app.md).
 
 ---
 

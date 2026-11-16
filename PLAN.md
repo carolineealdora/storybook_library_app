@@ -30,3 +30,8 @@
 
 ## Known risks / open questions
 - Frontends must drop the parent token on switching to Child view, or the gate is moot.
+
+---
+
+# Plan: Split role surface (STORY-4)
+**Status:** DONE 2026-11-16. The plan lives in storybook_management_app's `PLAN.md` ("Split role surface"). This repo removed the admin routes and code and made `/auth/refresh` parent-only (ADR-011).

@@ -2,7 +2,7 @@
 
 ## Project
 **Name:** Storybook Library backend (MainStory)
-**Purpose:** REST API for two apps: the Digital Storybook Library (parents and children browse, buy and read EPUB storybooks, or subscribe monthly) and Book Management (admins manage books and the subscription plan). Auth and payment are mocked for the MVP.
+**Purpose:** REST API for the Digital Storybook Library app only (parents and children browse, buy and read EPUB storybooks, or subscribe monthly). The Book Management back office and the shared schema live in `../storybook_management_app` (ADR-011). Auth and payment are mocked for the MVP.
 
 ---
 
