@@ -3,6 +3,7 @@
 package book
 
 import (
+	"fmt"
 	"time"
 
 	respConst "codebase/internal/constant/response"
@@ -129,4 +130,12 @@ func (s *Service) cover(bookID string) (*models.BookFile, error) {
 		return nil, s.errors.Wrap(respConst.BOOK_NOT_FOUND, "cover missing for "+bookID)
 	}
 	return f, nil
+}
+
+// AgeLabel renders "1–3" for a range and "3+" for plus (PRD US-16).
+func AgeLabel(ageType string, minAge int, maxAge *int) string {
+	if ageType == models.AgeRange && maxAge != nil {
+		return fmt.Sprintf("%d–%d", minAge, *maxAge)
+	}
+	return fmt.Sprintf("%d+", minAge)
 }

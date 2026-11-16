@@ -114,16 +114,6 @@ type (
 		UpdatedAt time.Time `json:"updated_at"`
 	}
 
-	// PlanPriceChange is one row of the back-office price history (CR-001).
-	PlanPriceChange struct {
-		ID            string    `json:"id"`
-		OldPrice      int       `json:"old_price"`
-		NewPrice      int       `json:"new_price"`
-		ChangedBy     string    `json:"changed_by"`
-		ChangedByName string    `json:"changed_by_name"`
-		ChangedAt     time.Time `json:"changed_at"`
-	}
-
 	SubscriptionOrder struct {
 		ID             string     `json:"id"`
 		PlanID         string     `json:"plan_id"`

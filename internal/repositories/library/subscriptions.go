@@ -19,34 +19,6 @@ func (r *Repo) GetPlan() (*models.SubscriptionPlan, error) {
 	return one(&p, p.ID, err)
 }
 
-// LockPlan reads the plan FOR UPDATE so concurrent admin edits record a correct old_price.
-func (r *Repo) LockPlan() (*models.SubscriptionPlan, error) {
-	var p models.SubscriptionPlan
-	err := r.db.RawSql(`SELECT `+planCols+` FROM subscription_plans WHERE code = ? FOR UPDATE`, &p, models.PlanMonthly)
-	return one(&p, p.ID, err)
-}
-
-func (r *Repo) UpdatePlan(planID string, price int, benefits, adminID string) (*models.SubscriptionPlan, error) {
-	var p models.SubscriptionPlan
-	err := r.db.RawSql(`UPDATE subscription_plans SET price = ?, benefits = ?, updated_by = ?, updated_at = now()
-		WHERE id = ? RETURNING `+planCols, &p, price, benefits, adminID, planID)
-	return one(&p, p.ID, err)
-}
-
-func (r *Repo) CreatePriceChange(planID string, oldPrice, newPrice int, adminID string) error {
-	return r.db.Exec(`INSERT INTO subscription_plan_price_history (plan_id, old_price, new_price, changed_by)
-		VALUES (?, ?, ?, ?)`, planID, oldPrice, newPrice, adminID)
-}
-
-// ListPriceChanges is the back-office price history, newest first.
-func (r *Repo) ListPriceChanges(planID string, limit, offset int) ([]models.PlanPriceChange, int64, error) {
-	return page[models.PlanPriceChange](r.db, limit, offset, `SELECT h.id, h.old_price, h.new_price,
-			h.changed_by, a.name AS changed_by_name, h.changed_at
-		FROM subscription_plan_price_history h JOIN admins a ON a.id = h.changed_by
-		WHERE h.plan_id = ?
-		ORDER BY h.changed_at DESC, h.id`, planID)
-}
-
 func (r *Repo) GetActiveSubscription(userID string) (*models.Subscription, error) {
 	var s models.Subscription
 	err := r.db.RawSql(`SELECT `+subscriptionCols+` FROM subscriptions s WHERE s.user_id = ? AND s.status = 'active'`, &s, userID)

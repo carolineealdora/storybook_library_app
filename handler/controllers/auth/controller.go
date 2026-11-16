@@ -65,9 +65,6 @@ func (c *Controller) RequireParentMode(next echo.HandlerFunc) echo.HandlerFunc {
 // PUBLIC
 func (c *Controller) Login(ec echo.Context) error { return c.login(ec, models.AccountParent) }
 
-// PUBLIC
-func (c *Controller) AdminLogin(ec echo.Context) error { return c.login(ec, models.AccountAdmin) }
-
 // PUBLIC — authenticated by the refresh token itself.
 func (c *Controller) Refresh(ec echo.Context) error {
 	var req dto.RefreshTokenRequest

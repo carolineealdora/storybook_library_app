@@ -45,8 +45,6 @@ func (e *ErrorImpl) Wrap(errConst, errInfo string) error {
 		errWrap                     bool
 		allowlistDomains            = []string{
 			respConst.VALIDATION_ERROR,
-			respConst.INVALID_FILE_FORMAT,
-			respConst.INVALID_AGE_RANGE,
 		}
 	)
 

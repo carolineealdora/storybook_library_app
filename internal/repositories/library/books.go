@@ -1,8 +1,6 @@
 package library
 
 import (
-	"strings"
-
 	"codebase/models"
 )
 
@@ -57,52 +55,6 @@ func (r *Repo) GetEpub(bookID string) (*models.BookFile, error) {
 	return one(&f, f.MimeType, err)
 }
 
-// ListBooks is the admin list: every non-deleted book, optional title search and status filter.
-func (r *Repo) ListBooks(search, status string, limit, offset int) ([]models.Book, int64, error) {
-	like := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(search)
-	return page[models.Book](r.db, limit, offset, `SELECT `+bookCols+` FROM books b
-		WHERE b.deleted_at IS NULL
-		  AND (?::text = '' OR b.title ILIKE '%' || ?::text || '%')
-		  AND (?::text = '' OR b.status = ?::text)
-		ORDER BY b.created_at DESC, b.id`, like, like, status, status)
-}
-
-func (r *Repo) GetBook(bookID string) (*models.Book, error) {
-	var b models.Book
-	err := r.db.RawSql(`SELECT `+bookCols+` FROM books b WHERE b.id = ? AND b.deleted_at IS NULL`, &b, bookID)
-	return one(&b, b.ID, err)
-}
-
-func (r *Repo) CreateBook(w BookWrite) (string, error) {
-	var id string
-	err := r.db.RawSql(`INSERT INTO books (title, author, description, age_type, age_min, age_max, price, status,
-			epub_file_name, epub_size_bytes, epub_content)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`, &id,
-		w.Title, w.Author, w.Description, w.AgeType, w.AgeMin, w.AgeMax, w.Price, w.Status,
-		*w.EpubFileName, len(w.Epub), w.Epub)
-	if err != nil {
-		return "", err
-	}
-	return id, r.upsertCover(id, w.Cover)
-}
-
-// UpdateBook replaces metadata; files are replaced only when provided. Returns false if no such book.
-func (r *Repo) UpdateBook(bookID string, w BookWrite) (bool, error) {
-	var id string
-	err := r.db.RawSql(`UPDATE books SET title = ?, author = ?, description = ?, age_type = ?, age_min = ?, age_max = ?,
-			price = ?, status = ?, updated_at = now(),
-			epub_file_name = COALESCE(?, epub_file_name),
-			epub_size_bytes = CASE WHEN ?::bytea IS NULL THEN epub_size_bytes ELSE ? END,
-			epub_content = COALESCE(?::bytea, epub_content)
-		WHERE id = ? AND deleted_at IS NULL RETURNING id`, &id,
-		w.Title, w.Author, w.Description, w.AgeType, w.AgeMin, w.AgeMax, w.Price, w.Status,
-		w.EpubFileName, w.Epub, len(w.Epub), w.Epub, bookID)
-	if err != nil || id == "" {
-		return false, err
-	}
-	return true, r.upsertCover(id, w.Cover)
-}
-
 func (r *Repo) upsertCover(bookID string, cover *models.BookFile) error {
 	if cover == nil {
 		return nil
@@ -111,12 +63,4 @@ func (r *Repo) upsertCover(bookID string, cover *models.BookFile) error {
 		ON CONFLICT (book_id) DO UPDATE SET mime_type = EXCLUDED.mime_type, file_name = EXCLUDED.file_name,
 			size_bytes = EXCLUDED.size_bytes, content = EXCLUDED.content, updated_at = now()`,
 		bookID, cover.MimeType, cover.FileName, len(cover.Content), cover.Content)
-}
-
-// SoftDeleteBook hides the book from the showcase; owners keep it (PRD US-16, E5).
-func (r *Repo) SoftDeleteBook(bookID string) (bool, error) {
-	var id string
-	err := r.db.RawSql(`UPDATE books SET deleted_at = now(), updated_at = now()
-		WHERE id = ? AND deleted_at IS NULL RETURNING id`, &id, bookID)
-	return id != "", err
 }

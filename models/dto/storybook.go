@@ -62,20 +62,6 @@ type (
 		Page     int   `json:"page"`
 		PageSize int   `json:"page_size"`
 	}
-
-	// AdminBookListQuery repeats the page fields: the binder only reads tagged top-level fields.
-	AdminBookListQuery struct {
-		Search   string `query:"search" validate:"max=255"`
-		Status   string `query:"status" validate:"omitempty,oneof=draft published"`
-		Page     int    `query:"page" validate:"gte=0"`
-		PageSize int    `query:"page_size" validate:"gte=0,lte=100"`
-	}
-
-	// Price is a pointer so "missing" (VALIDATION_ERROR) differs from "<= 0" (INVALID_PRICE, CR-001 E-CR2).
-	UpdatePlanRequest struct {
-		Price    *int   `json:"price" validate:"required"`
-		Benefits string `json:"benefits" validate:"required,max=5000"`
-	}
 )
 
 func (r LoginRequest) Validate() interface{}                   { return r }
@@ -88,7 +74,6 @@ func (r IDParam) Validate() interface{}                        { return r }
 func (r CreateBookOrderRequest) Validate() interface{}         { return r }
 func (r CreateSubscriptionOrderRequest) Validate() interface{} { return r }
 func (r PayRequest) Validate() interface{}                     { return r }
-func (r AdminBookListQuery) Validate() interface{}             { return r }
 func (r PageQuery) Validate() interface{}                      { return r }
 
 const DefaultPageSize = 20
@@ -104,5 +89,4 @@ func (p PageQuery) Normalize() PageQuery {
 	return p
 }
 
-func (p PageQuery) Offset() int                   { return (p.Page - 1) * p.PageSize }
-func (r UpdatePlanRequest) Validate() interface{} { return r }
+func (p PageQuery) Offset() int { return (p.Page - 1) * p.PageSize }

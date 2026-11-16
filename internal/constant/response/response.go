@@ -9,9 +9,6 @@ import (
 // Error codes from PRD §8 / §12.4. The map key is the machine-readable `error.code`.
 const (
 	VALIDATION_ERROR        = "VALIDATION_ERROR"
-	INVALID_FILE_FORMAT     = "INVALID_FILE_FORMAT"
-	INVALID_AGE_RANGE       = "INVALID_AGE_RANGE"
-	INVALID_PRICE           = "INVALID_PRICE"
 	INVALID_CREDENTIALS     = "INVALID_CREDENTIALS"
 	UNAUTHORIZED            = "UNAUTHORIZED"
 	TOKEN_EXPIRED           = "TOKEN_EXPIRED"
@@ -37,10 +34,7 @@ const (
 )
 
 var Responses = map[string]models.ResponsePayload{
-	VALIDATION_ERROR:    {Message: "Request validation failed.", HttpCode: http.StatusBadRequest},
-	INVALID_FILE_FORMAT: {Message: "Book file must be .epub and cover must be .jpg, .jpeg or .png.", HttpCode: http.StatusBadRequest},
-	INVALID_AGE_RANGE:   {Message: "Age must be whole numbers and min must be lower than max.", HttpCode: http.StatusBadRequest},
-	INVALID_PRICE:       {Message: "Price must be a whole number above 0.", HttpCode: http.StatusBadRequest},
+	VALIDATION_ERROR: {Message: "Request validation failed.", HttpCode: http.StatusBadRequest},
 
 	INVALID_CREDENTIALS:   {Message: "Email or password is incorrect", HttpCode: http.StatusUnauthorized},
 	UNAUTHORIZED:          {Message: "Please log in again.", HttpCode: http.StatusUnauthorized},
