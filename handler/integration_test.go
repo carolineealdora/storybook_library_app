@@ -15,13 +15,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"codebase/internal/services/subscription"
-	"codebase/migrations"
 	"codebase/models"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 var holder models.SharedHolder
@@ -34,18 +36,82 @@ func TestMain(m *testing.M) {
 	if os.Getenv("JWT_SECRET") == "" {
 		os.Setenv("JWT_SECRET", "integration-test-secret")
 	}
-	if err := os.Chdir(".."); err != nil { // migrations are read from ./migrations
+	if err := os.Chdir(".."); err != nil { // repo root, so SCHEMA_DIR's default resolves
 		panic(err)
 	}
 	holder.Init()
 	if err := holder.Sql.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`); err != nil {
 		panic(err)
 	}
-	if err := migrations.NewMigration(holder).Up(); err != nil {
+	if err := applySchema(); err != nil {
+		panic(err)
+	}
+	if err := seedFixtures(); err != nil {
 		panic(err)
 	}
 	InitRoute(&holder)
 	os.Exit(m.Run())
+}
+
+// Test-only accounts; never used outside this suite.
+const (
+	parentEmail  = "parent@mainstory.test"
+	parent2Email = "parent2@mainstory.test"
+	adminEmail   = "admin@mainstory.test"
+	parentPass   = "it-parent-pass"
+	adminPass    = "it-admin-pass"
+)
+
+// applySchema runs the shared schema owned by storybook_management_app (its ADR-010).
+// Filenames start with a timestamp, so sorted order is apply order.
+func applySchema() error {
+	dir := os.Getenv("SCHEMA_DIR")
+	if dir == "" {
+		dir = "../storybook_management_app/migrations"
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "*.sql")) // Glob returns names sorted
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("no .sql files in SCHEMA_DIR %q", dir)
+	}
+	for _, f := range files {
+		content, err := os.ReadFile(f)
+		if err != nil {
+			return err
+		}
+		if err := holder.Sql.Exec(string(content)); err != nil {
+			return fmt.Errorf("%s: %w", filepath.Base(f), err)
+		}
+	}
+	return nil
+}
+
+// seedFixtures creates two parents, one admin and the monthly plan, hashing passwords at run time.
+func seedFixtures() error {
+	parentHash, err := bcrypt.GenerateFromPassword([]byte(parentPass), bcrypt.MinCost)
+	if err != nil {
+		return err
+	}
+	adminHash, err := bcrypt.GenerateFromPassword([]byte(adminPass), bcrypt.MinCost)
+	if err != nil {
+		return err
+	}
+	for _, p := range []struct{ name, email string }{{"Demo Parent", parentEmail}, {"Second Parent", parent2Email}} {
+		if err := holder.Sql.Exec(`WITH u AS (INSERT INTO users (name) VALUES (?) RETURNING id)
+			INSERT INTO credentials (email, password_hash, account_type, user_id) SELECT ?, ?, 'parent', id FROM u`,
+			p.name, p.email, string(parentHash)); err != nil {
+			return err
+		}
+	}
+	if err := holder.Sql.Exec(`WITH a AS (INSERT INTO admins (name) VALUES ('Admin') RETURNING id)
+		INSERT INTO credentials (email, password_hash, account_type, admin_id) SELECT ?, ?, 'admin', id FROM a`,
+		adminEmail, string(adminHash)); err != nil {
+		return err
+	}
+	return holder.Sql.Exec(`INSERT INTO subscription_plans (code, name, price, benefits)
+		VALUES ('monthly', 'Monthly Subscription', 49000, 'Read all published books. New books every month. Cancel anytime.')`)
 }
 
 // ---- tiny HTTP client ----
@@ -205,7 +271,6 @@ func findBook(books []bookDTO, id string) *bookDTO {
 // ---- the story ----
 
 func TestLibraryEndToEnd(t *testing.T) {
-	const parentEmail, parentPass = "parent@mainstory.test", "Parent123!"
 	cover := [2]string{"cover.png", "\x89PNG\r\n\x1a\n-fake-png-body"}
 	epub := [2]string{"story.epub", epubBytes(t)}
 
@@ -214,8 +279,8 @@ func TestLibraryEndToEnd(t *testing.T) {
 	expect(t, call(t, "POST", "/auth/login", "", map[string]string{"email": "ghost@x.test", "password": "nope"}), 401, "INVALID_CREDENTIALS")
 	expect(t, call(t, "POST", "/admin/auth/login", "", map[string]string{"email": parentEmail, "password": parentPass}), 403, "FORBIDDEN")
 	parent, parentRefresh, pt := login(t, "/auth/login", "PARENT@mainstory.test", parentPass) // email is case-insensitive
-	parent2, _, pt2 := login(t, "/auth/login", "parent2@mainstory.test", parentPass)
-	admin, adminRefresh, adminPT := login(t, "/admin/auth/login", "admin@mainstory.test", "Admin123!")
+	parent2, _, pt2 := login(t, "/auth/login", parent2Email, parentPass)
+	admin, adminRefresh, adminPT := login(t, "/admin/auth/login", adminEmail, adminPass)
 	if pt == "" || adminPT != "" {
 		t.Fatalf("parent login must return a parent_token, admin login must not (got %q / %q)", pt, adminPT)
 	}
