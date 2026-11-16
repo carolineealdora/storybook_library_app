@@ -34,28 +34,65 @@ func (s *Service) Plan() (*models.SubscriptionPlan, error) {
 	return p, nil
 }
 
-// UpdatePlan changes price/benefits for new subscriptions and renewals only; running
-// periods keep their price_paid (PRD US-17).
-func (s *Service) UpdatePlan(price int, benefits string) (*models.SubscriptionPlan, error) {
-	current, err := s.Plan()
-	if err != nil {
-		return nil, err
+// UpdatePlan changes price/benefits for new subscriptions and the next renewal only; running
+// periods keep their price_paid (PRD US-17, CR-001-2). A real price change is logged in the
+// price history in the same transaction; the same price writes no history row (E-CR6).
+func (s *Service) UpdatePlan(adminID string, price int, benefits string) (*models.SubscriptionPlan, error) {
+	if price <= 0 {
+		return nil, s.errors.Wrap(respConst.INVALID_PRICE, "plan price must be > 0")
 	}
-	p, err := s.repo.UpdatePlan(current.ID, price, benefits)
+	var plan *models.SubscriptionPlan
+	err := s.repo.InTx(func(tx *library.Repo) error {
+		current, err := tx.LockPlan()
+		if err != nil || current == nil {
+			return s.errors.Wrap(respConst.GENERAL_ERROR, "update plan: subscription plan missing")
+		}
+		if current.Price == price && current.Benefits == benefits {
+			plan = current // nothing changed
+			return nil
+		}
+		if current.Price != price {
+			if err := tx.CreatePriceChange(current.ID, current.Price, price, adminID); err != nil {
+				return s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
+			}
+		}
+		if plan, err = tx.UpdatePlan(current.ID, price, benefits, adminID); err != nil {
+			return s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
+		return nil, helpers.Coded(s.errors, err)
 	}
-	return p, nil
+	return plan, nil
 }
 
-// CreateOrder opens a pending "new" subscription order at today's plan price.
-func (s *Service) CreateOrder(userID, idempotencyKey string) (*models.SubscriptionOrder, error) {
+// PriceHistory lists the plan's price changes for the back office, newest first.
+func (s *Service) PriceHistory(limit, offset int) ([]models.PlanPriceChange, int64, error) {
+	plan, err := s.Plan()
+	if err != nil {
+		return nil, 0, err
+	}
+	rows, total, err := s.repo.ListPriceChanges(plan.ID, limit, offset)
+	if err != nil {
+		return nil, 0, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
+	}
+	return rows, total, nil
+}
+
+// CreateOrder opens a pending "new" subscription order at today's plan price. expectedPrice is
+// what the paywall showed: if the admin changed the price since, the parent must review it
+// first (409 PRICE_CHANGED, CR-001 E-CR1). Paying then charges the order's snapshot (PRD E7).
+func (s *Service) CreateOrder(userID, idempotencyKey string, expectedPrice int) (*models.SubscriptionOrder, error) {
 	if err := s.notSubscribed(s.repo, userID); err != nil {
 		return nil, err
 	}
 	plan, err := s.Plan()
 	if err != nil {
 		return nil, err
+	}
+	if expectedPrice != plan.Price {
+		return nil, s.errors.Wrap(respConst.PRICE_CHANGED, "subscription order: price changed since the paywall was shown")
 	}
 	o, err := s.repo.CreateSubscriptionOrder(userID, plan.ID, models.OrderTypeNew, plan.Price, models.OrderPending, idempotencyKey, nil, nil)
 	if library.IsUniqueViolation(err) {

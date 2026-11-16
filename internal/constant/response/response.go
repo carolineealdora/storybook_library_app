@@ -11,6 +11,7 @@ const (
 	VALIDATION_ERROR        = "VALIDATION_ERROR"
 	INVALID_FILE_FORMAT     = "INVALID_FILE_FORMAT"
 	INVALID_AGE_RANGE       = "INVALID_AGE_RANGE"
+	INVALID_PRICE           = "INVALID_PRICE"
 	INVALID_CREDENTIALS     = "INVALID_CREDENTIALS"
 	UNAUTHORIZED            = "UNAUTHORIZED"
 	TOKEN_EXPIRED           = "TOKEN_EXPIRED"
@@ -27,6 +28,7 @@ const (
 	BOOK_UNAVAILABLE        = "BOOK_UNAVAILABLE"
 	BOOK_NOT_PURCHASABLE    = "BOOK_NOT_PURCHASABLE"
 	SUBSCRIPTION_ACTIVE     = "SUBSCRIPTION_ACTIVE"
+	PRICE_CHANGED           = "PRICE_CHANGED"
 	SUBSCRIPTION_NOT_ACTIVE = "SUBSCRIPTION_NOT_ACTIVE"
 	DUPLICATE_REQUEST       = "DUPLICATE_REQUEST"
 	PIN_NOT_SET             = "PIN_NOT_SET"
@@ -38,6 +40,7 @@ var Responses = map[string]models.ResponsePayload{
 	VALIDATION_ERROR:    {Message: "Request validation failed.", HttpCode: http.StatusBadRequest},
 	INVALID_FILE_FORMAT: {Message: "Book file must be .epub and cover must be .jpg, .jpeg or .png.", HttpCode: http.StatusBadRequest},
 	INVALID_AGE_RANGE:   {Message: "Age must be whole numbers and min must be lower than max.", HttpCode: http.StatusBadRequest},
+	INVALID_PRICE:       {Message: "Price must be a whole number above 0.", HttpCode: http.StatusBadRequest},
 
 	INVALID_CREDENTIALS:   {Message: "Email or password is incorrect", HttpCode: http.StatusUnauthorized},
 	UNAUTHORIZED:          {Message: "Please log in again.", HttpCode: http.StatusUnauthorized},
@@ -59,6 +62,7 @@ var Responses = map[string]models.ResponsePayload{
 	BOOK_UNAVAILABLE:        {Message: "This book is no longer available.", HttpCode: http.StatusConflict},
 	BOOK_NOT_PURCHASABLE:    {Message: "This book is free and cannot be purchased.", HttpCode: http.StatusConflict},
 	SUBSCRIPTION_ACTIVE:     {Message: "You already have an active subscription.", HttpCode: http.StatusConflict},
+	PRICE_CHANGED:           {Message: "The subscription price has changed. Please review the new price.", HttpCode: http.StatusConflict},
 	SUBSCRIPTION_NOT_ACTIVE: {Message: "There is no active subscription.", HttpCode: http.StatusConflict},
 	DUPLICATE_REQUEST:       {Message: "This request was already processed.", HttpCode: http.StatusConflict},
 	PIN_NOT_SET:             {Message: "Please set a PIN in Settings first.", HttpCode: http.StatusConflict},

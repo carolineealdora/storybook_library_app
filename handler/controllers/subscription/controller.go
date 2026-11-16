@@ -30,8 +30,18 @@ func (c *Controller) UpdatePlan(ec echo.Context) error {
 	if err := c.Bind(ec, &req); err != nil {
 		return c.Respond(ec, nil, err)
 	}
-	p, err := c.Service.UpdatePlan(req.Price, req.Benefits)
+	p, err := c.Service.UpdatePlan(ec.Get(key.AccountID).(string), *req.Price, req.Benefits)
 	return c.Respond(ec, p, err)
+}
+
+// PriceHistory is GET /admin/subscription-plan/history (CR-001-2).
+func (c *Controller) PriceHistory(ec echo.Context) error {
+	p, err := c.Page(ec)
+	if err != nil {
+		return c.Respond(ec, nil, err)
+	}
+	rows, total, err := c.Service.PriceHistory(p.PageSize, p.Offset())
+	return c.RespondPage(ec, rows, total, p, err)
 }
 
 func (c *Controller) CreateOrder(ec echo.Context) error {
@@ -39,7 +49,7 @@ func (c *Controller) CreateOrder(ec echo.Context) error {
 	if err := c.Bind(ec, &req); err != nil {
 		return c.Respond(ec, nil, err)
 	}
-	o, err := c.Service.CreateOrder(ec.Get(key.AccountID).(string), req.IdempotencyKey)
+	o, err := c.Service.CreateOrder(ec.Get(key.AccountID).(string), req.IdempotencyKey, req.ExpectedPrice)
 	return c.Respond(ec, o, err)
 }
 

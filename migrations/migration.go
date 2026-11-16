@@ -14,6 +14,7 @@ var (
 		"20261116000001_create_storybook_tables",
 		"20261116000002_seed_mock_accounts_and_plan",
 		"20261116000003_add_forgot_pin_attempt_limit",
+		"20261116000004_cr001_plan_pricing",
 	}
 )
 

@@ -90,6 +90,7 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 	v1.DELETE("/admin/books/:id", bookCtrl.AdminDelete, admin)
 	v1.GET("/admin/subscription-plan", subscriptionCtrl.Plan, admin)
 	v1.PUT("/admin/subscription-plan", subscriptionCtrl.UpdatePlan, admin)
+	v1.GET("/admin/subscription-plan/history", subscriptionCtrl.PriceHistory, admin)
 }
 
 // errorHandler gives router/framework errors (404, 405, 413, panics) the same

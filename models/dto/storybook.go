@@ -38,8 +38,10 @@ type (
 		IdempotencyKey string `json:"idempotency_key" validate:"required,max=100"`
 	}
 
+	// ExpectedPrice is the price the paywall showed; a mismatch is 409 PRICE_CHANGED (CR-001 E-CR1).
 	CreateSubscriptionOrderRequest struct {
 		IdempotencyKey string `json:"idempotency_key" validate:"required,max=100"`
+		ExpectedPrice  int    `json:"expected_price" validate:"required"`
 	}
 
 	// PayRequest is the mocked payment: the client picks the outcome (PRD: success / failed only).
@@ -69,8 +71,9 @@ type (
 		PageSize int    `query:"page_size" validate:"gte=0,lte=100"`
 	}
 
+	// Price is a pointer so "missing" (VALIDATION_ERROR) differs from "<= 0" (INVALID_PRICE, CR-001 E-CR2).
 	UpdatePlanRequest struct {
-		Price    int    `json:"price" validate:"required,gt=0"`
+		Price    *int   `json:"price" validate:"required"`
 		Benefits string `json:"benefits" validate:"required,max=5000"`
 	}
 )

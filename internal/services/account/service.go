@@ -34,8 +34,16 @@ type (
 		Name         string               `json:"name"`
 		Email        string               `json:"email"`
 		PinSet       bool                 `json:"pin_set"`
-		IsSubscriber bool                 `json:"is_subscriber"`
-		Subscription *models.Subscription `json:"subscription"`
+		PlanStatus   string               `json:"plan_status"`   // badge: "subscribed" | "free" (CR-001-1)
+		IsSubscriber bool                 `json:"is_subscriber"` // kept for existing clients; same as plan_status == "subscribed"
+		Subscription *CurrentSubscription `json:"subscription"`
+	}
+
+	// CurrentSubscription is the active period plus what the next renewal will cost (CR-001-2).
+	CurrentSubscription struct {
+		*models.Subscription
+		NextRenewalPrice   int  `json:"next_renewal_price"`
+		PriceChangePending bool `json:"price_change_pending"`
 	}
 )
 
@@ -52,7 +60,19 @@ func (s *Service) Me(userID string) (*Me, error) {
 	if err != nil {
 		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, err.Error())
 	}
-	return &Me{ID: u.ID, Name: u.Name, Email: u.Email, PinSet: u.PinHash != nil, IsSubscriber: sub != nil, Subscription: sub}, nil
+	me := &Me{ID: u.ID, Name: u.Name, Email: u.Email, PinSet: u.PinHash != nil, PlanStatus: models.PlanStatusFree}
+	if sub == nil {
+		return me, nil
+	}
+	// "Subscribed" follows the same rule as book access: status = active (ADR-006). An expired or
+	// cancelled period is never active, and an active one is renewed within the hour after expiry.
+	plan, err := s.repo.GetPlan()
+	if err != nil || plan == nil {
+		return nil, s.errors.Wrap(respConst.GENERAL_ERROR, "me: subscription plan missing")
+	}
+	me.PlanStatus, me.IsSubscriber = models.PlanStatusSubscribed, true
+	me.Subscription = &CurrentSubscription{Subscription: sub, NextRenewalPrice: plan.Price, PriceChangePending: plan.Price != sub.PricePaid}
+	return me, nil
 }
 
 func (s *Service) UpdateName(userID, name string) (*Me, error) {

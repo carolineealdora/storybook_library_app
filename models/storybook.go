@@ -28,6 +28,12 @@ const (
 
 	OrderTypeNew     = "new"
 	OrderTypeRenewal = "renewal"
+
+	// Account badge from GET /me (CR-001-1).
+	PlanStatusSubscribed = "subscribed"
+	PlanStatusFree       = "free"
+
+	PlanMonthly = "monthly" // the only plan in the MVP
 )
 
 type (
@@ -100,10 +106,22 @@ type (
 
 	SubscriptionPlan struct {
 		ID        string    `json:"id"`
+		Code      string    `json:"code"`
+		Name      string    `json:"name"`
 		Price     int       `json:"price"`
 		Benefits  string    `json:"benefits"`
 		Duration  string    `json:"duration"`
 		UpdatedAt time.Time `json:"updated_at"`
+	}
+
+	// PlanPriceChange is one row of the back-office price history (CR-001).
+	PlanPriceChange struct {
+		ID            string    `json:"id"`
+		OldPrice      int       `json:"old_price"`
+		NewPrice      int       `json:"new_price"`
+		ChangedBy     string    `json:"changed_by"`
+		ChangedByName string    `json:"changed_by_name"`
+		ChangedAt     time.Time `json:"changed_at"`
 	}
 
 	SubscriptionOrder struct {
