@@ -6,7 +6,7 @@
 
 ## System purpose
 
-One Go API serves two frontends built in Lovable:
+This Go API is called by the **Digital Storybook Library** frontend (`fe_storybook_library_app`). It also still implements the admin endpoints below, but the Book Management frontend (`fe_storybook_management_app`) calls storybook_management_app, which owns the shared schema:
 
 - **Digital Storybook Library** (parent account): browse the showcase, buy single books, subscribe monthly, read EPUBs. Has a Parent view and a Child view; switching from Child to Parent view needs a PIN.
 - **Book Management** (admin account): book CRUD with EPUB and cover upload, subscription plan price and benefits.
