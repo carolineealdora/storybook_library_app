@@ -1,133 +1,116 @@
 package handler
 
 import (
-	"bytes"
-	"context"
-	"fmt"
-	"sync"
+	"errors"
+	"net/http"
+	"strings"
 
+	"codebase/handler/controllers/account"
+	"codebase/handler/controllers/auth"
+	"codebase/handler/controllers/book"
 	"codebase/handler/controllers/healthcheck"
-	"codebase/handler/controllers/payment"
-	"codebase/internal/constant/key"
+	"codebase/handler/controllers/order"
+	"codebase/handler/controllers/subscription"
 	respConst "codebase/internal/constant/response"
 	helpers "codebase/internal/helper"
 	"codebase/models"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/pkg/errors"
 	"go.elastic.co/apm/module/apmechov4/v2"
 )
 
+// InitRoute registers middleware and every endpoint of PRD §12.3 under /api/v1.
 func InitRoute(sharedHolder *models.SharedHolder) {
-	sharedHolder.Echo.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			requestId := c.Request().Header.Get("x-request-id")
-			url := c.Request().URL.String()
-			method := c.Request().Method
+	e := sharedHolder.Echo
+	e.HTTPErrorHandler = errorHandler(sharedHolder)
 
-			// set request id on ctx
-			ctx := c.Request().Context()
-			ctx = context.WithValue(ctx, key.RequestId, requestId)
-			c.SetRequest(c.Request().WithContext(ctx))
-
-			// init handlers
-			response := helpers.NewResponse(sharedHolder)
-			validation := helpers.NewValidation(c, sharedHolder)
-			errors := helpers.NewError(sharedHolder)
-
-			// validate path
-			if err := validation.ValidateRequestedURL(); err != nil {
-				return response.CommonResponse(models.ResponseArgs{
-					Ctx:       c,
-					ErrorData: err,
-				})
-			}
-
-			// validate method
-			if err := validation.ValidateGetBody(); err != nil {
-				return response.CommonResponse(models.ResponseArgs{
-					Ctx:       c,
-					ErrorData: err,
-				})
-			}
-
-			// validate headers
-			if err := validation.ValidateHeader(); err != nil {
-				return response.CommonResponse(models.ResponseArgs{
-					Ctx:       c,
-					ErrorData: errors.Wrap(respConst.INVALID_REQUEST_HEADER, err.Error()),
-				})
-			}
-
-			// restricting requests based on x-request-id data
-			key := fmt.Sprintf("%s-%s-%s", requestId, url, method)
-			data := sharedHolder.Redis.Exists(context.Background(), key)
-			if data.Val() > 0 {
-				return response.CommonResponse(models.ResponseArgs{
-					Ctx: c,
-					ErrorData: errors.Wrap(respConst.CAN_NOT_ACCESS_API,
-						"Redis failed: redis key already exists"),
-				})
-			}
-			sharedHolder.Redis.Set(context.Background(), key, "", -1)
-
-			// process the request (call the next handler)
-			err := next(c)
-
-			_ = sharedHolder.Redis.Del(context.Background(), key)
-
-			return err
-		}
-	})
+	e.Use(middleware.Recover())
+	e.Use(middleware.RequestID())
+	e.Use(apmechov4.Middleware())
+	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
+		Format: "[${time_rfc3339}] | ${status} | ${method} ${path} | ${latency_human} | ip=${remote_ip} | request_id=${id}\n",
+		Output: e.Logger.Output(),
+	}))
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: sharedHolder.Config.CORSAllowOrigins,
+		AllowHeaders: []string{echo.HeaderAuthorization, echo.HeaderContentType, echo.HeaderXRequestID, auth.HeaderParentToken},
+	}))
 
 	//init controller here
 	healthcheckCtrl := healthcheck.NewController(sharedHolder)
-	paymentCtrl := payment.NewController(sharedHolder)
+	authCtrl := auth.NewController(sharedHolder)
+	accountCtrl := account.NewController(sharedHolder)
+	bookCtrl := book.NewController(sharedHolder)
+	orderCtrl := order.NewController(sharedHolder)
+	subscriptionCtrl := subscription.NewController(sharedHolder)
 
-	sharedHolder.Echo.Use(apmechov4.Middleware())
-	sharedHolder.Echo.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
-		Format: "[${time_rfc3339}] | ${status} | ${method} ${path} | ${latency_human} | ip=${remote_ip} | request_id=${custom}\n",
-		Output: sharedHolder.Echo.Logger.Output(),
-		CustomTagFunc: func(c echo.Context, buf *bytes.Buffer) (int, error) {
-			reqId := "-"
-			if reqIdData := c.Request().Context().Value(key.RequestId); reqIdData != nil {
-				reqId = reqIdData.(string)
-			}
-
-			return buf.Write([]byte(reqId))
-		},
-	}))
-
-	// loging middleware
-	sharedHolder.Echo.Use(middleware.BodyDump(func(c echo.Context, reqBody, resBody []byte) {
-		respBodyDump := make(chan error)
-		customMiddleware := helpers.NewMiddleware(sharedHolder)
-
-		wg := &sync.WaitGroup{}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			respBodyDump <- customMiddleware.BodyDumpHandler(c, reqBody, resBody)
-		}()
-		go func() {
-			wg.Wait()
-			close(respBodyDump)
-		}()
-	}))
+	parent := authCtrl.Require(models.AccountParent)
+	parentView := authCtrl.RequireParentMode // money and settings: not reachable from Child view
+	admin := authCtrl.Require(models.AccountAdmin)
+	uploadLimit := middleware.BodyLimit("60M") // 50 MB EPUB + 5 MB cover + form fields
 
 	//insert route here
-	v1 := sharedHolder.Echo.Group("/api/v1")
+	v1 := e.Group("/api/v1")
 
-	healthcheckGroup := v1.Group("/healthcheck")
-	healthcheckGroup.GET("", healthcheckCtrl.GetHealthcheck)
+	// PUBLIC
+	v1.GET("/healthcheck", healthcheckCtrl.GetHealthcheck)
+	v1.POST("/auth/login", authCtrl.Login)
+	v1.POST("/auth/refresh", authCtrl.Refresh)
+	v1.POST("/admin/auth/login", authCtrl.AdminLogin)
 
-	paymentGroup := v1.Group("/payment")
-	paymentGroup.GET("/ref/:refId", paymentCtrl.GetByRefId)
+	// Digital Storybook Library app (parent)
+	v1.POST("/auth/logout", authCtrl.Logout, parent)
+	v1.GET("/me", accountCtrl.Me, parent)
+	v1.PATCH("/me", accountCtrl.UpdateMe, parent, parentView)
+	v1.PUT("/me/pin", accountCtrl.SetPin, parent, parentView)
+	v1.POST("/me/pin/verify", accountCtrl.VerifyPin, parent)
+	v1.POST("/me/pin/forgot", accountCtrl.ForgotPin, parent)
+	v1.GET("/me/books", bookCtrl.MyBooks, parent)
+	v1.GET("/books", bookCtrl.List, parent)
+	v1.GET("/books/:id", bookCtrl.Detail, parent)
+	v1.GET("/books/:id/cover", bookCtrl.Cover, parent)
+	v1.GET("/books/:id/content", bookCtrl.Content, parent)
+	v1.POST("/book-orders", orderCtrl.Create, parent, parentView)
+	v1.POST("/book-orders/:id/pay", orderCtrl.Pay, parent, parentView)
+	v1.GET("/book-orders", orderCtrl.History, parent)
+	v1.GET("/subscription/plan", subscriptionCtrl.Plan, parent)
+	v1.POST("/subscription-orders", subscriptionCtrl.CreateOrder, parent, parentView)
+	v1.POST("/subscription-orders/:id/pay", subscriptionCtrl.PayOrder, parent, parentView)
+	v1.POST("/subscriptions/current/cancel", subscriptionCtrl.Cancel, parent, parentView)
+	v1.GET("/subscriptions", subscriptionCtrl.History, parent)
 
-	err := sharedHolder.Echo.Start("0.0.0.0:" + sharedHolder.Config.Port)
-	if err != nil {
-		sharedHolder.Log.Fatal(errors.Wrap(err, "failed to start echo"))
-		return
+	// Book Management app (admin)
+	v1.POST("/admin/auth/logout", authCtrl.Logout, admin)
+	v1.GET("/admin/books", bookCtrl.AdminList, admin)
+	v1.GET("/admin/books/:id", bookCtrl.AdminGet, admin)
+	v1.GET("/admin/books/:id/cover", bookCtrl.AdminCover, admin)
+	v1.POST("/admin/books", bookCtrl.AdminCreate, admin, uploadLimit)
+	v1.PUT("/admin/books/:id", bookCtrl.AdminUpdate, admin, uploadLimit)
+	v1.DELETE("/admin/books/:id", bookCtrl.AdminDelete, admin)
+	v1.GET("/admin/subscription-plan", subscriptionCtrl.Plan, admin)
+	v1.PUT("/admin/subscription-plan", subscriptionCtrl.UpdatePlan, admin)
+}
+
+// errorHandler gives router/framework errors (404, 405, 413, panics) the same
+// {"error": {"code", "message"}} shape as the app's own errors.
+func errorHandler(sharedHolder *models.SharedHolder) echo.HTTPErrorHandler {
+	return func(err error, c echo.Context) {
+		if c.Response().Committed {
+			return
+		}
+		status := http.StatusInternalServerError
+		body := helpers.ErrorBody{Code: respConst.GENERAL_ERROR, Message: respConst.Responses[respConst.GENERAL_ERROR].Message}
+		var he *echo.HTTPError
+		if errors.As(err, &he) && he.Code < 500 {
+			status = he.Code
+			text := http.StatusText(he.Code)
+			body = helpers.ErrorBody{Code: strings.ToUpper(strings.ReplaceAll(text, " ", "_")), Message: text}
+		} else {
+			sharedHolder.Log.Error("unhandled error: ", err)
+		}
+		if err := c.JSON(status, map[string]any{"error": body}); err != nil {
+			sharedHolder.Log.Error("write error response: ", err)
+		}
 	}
 }

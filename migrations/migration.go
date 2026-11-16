@@ -4,14 +4,16 @@ import (
 	"os"
 
 	"codebase/models"
-	sql "codebase/pkg/orm"
 	"codebase/pkg/migrator/postgres"
+	sql "codebase/pkg/orm"
 )
 
 var (
 	scripts    = map[string]postgres.SQLMigration{}
 	migrations = []string{
-		"20250806084945_create_payment_table",
+		"20261116000001_create_storybook_tables",
+		"20261116000002_seed_mock_accounts_and_plan",
+		"20261116000003_add_forgot_pin_attempt_limit",
 	}
 )
 

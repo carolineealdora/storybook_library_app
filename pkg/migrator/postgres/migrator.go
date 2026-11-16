@@ -3,6 +3,7 @@ package postgres
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	sql "codebase/pkg/orm"
 )
@@ -37,6 +38,7 @@ func NewMigrator(orm sql.ORM, tableName, path string, scripts map[string]SQLMigr
 	for name := range scripts {
 		order = append(order, name)
 	}
+	sort.Strings(order) // names are timestamp-prefixed; map iteration order is random
 	return &migratorImpl{orm: orm, tableName: tableName, path: path, scripts: scripts, order: order}
 }
 

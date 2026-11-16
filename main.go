@@ -2,10 +2,13 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"codebase/handler"
+	"codebase/internal/services/subscription"
 	"codebase/migrations"
 	"codebase/models"
 )
@@ -22,18 +25,19 @@ func main() {
 			migrate(shared, args)
 			return
 		case "run":
-			run(shared)
-			return
 		default:
 			fmt.Println("unknown command")
 			return
 		}
 	}
-	handler.InitRoute(&shared)
-	run(shared)
+	run(&shared)
 }
 
 func migrate(shared models.SharedHolder, args []string) {
+	if len(args) < 3 {
+		shared.Log.Error("usage: migrate up | down [name] | create <name>")
+		return
+	}
 	migrator := migrations.NewMigration(shared)
 	switch args[2] {
 	case "up":
@@ -42,7 +46,6 @@ func migrate(shared models.SharedHolder, args []string) {
 			shared.Log.Error(err)
 			return
 		}
-		break
 	case "down":
 		var err error
 		if len(args) <= 3 || len(args[3]) == 0 {
@@ -61,7 +64,6 @@ func migrate(shared models.SharedHolder, args []string) {
 			shared.Log.Error(err)
 			return
 		}
-		break
 	case "create":
 		if len(args) <= 3 || len(args[3]) == 0 {
 			shared.Log.Error("please input new migration name")
@@ -73,12 +75,18 @@ func migrate(shared models.SharedHolder, args []string) {
 			shared.Log.Error(err)
 			return
 		}
-		break
 	default:
-		break
 	}
 }
 
-func run(shared models.SharedHolder) {
-	shared.Log.Info("Server started")
+func run(shared *models.SharedHolder) {
+	handler.InitRoute(shared)
+
+	// Auto-renew job (PRD §12.1 Scheduler). Hourly so a renewal lands within the hour of expiry.
+	go subscription.NewService(shared).RunRenewals(context.Background(), time.Hour)
+
+	shared.Log.Info("Server starting on :" + shared.Config.Port)
+	if err := shared.Echo.Start("0.0.0.0:" + shared.Config.Port); err != nil {
+		shared.Log.Fatal("failed to start echo: ", err)
+	}
 }
