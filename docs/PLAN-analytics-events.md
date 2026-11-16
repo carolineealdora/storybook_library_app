@@ -1,5 +1,6 @@
 # Plan: Analytics events for PRD §13 success metrics
 **Status:** Proposed, not started · **Created:** 2026-11-16
+**Note (2026-11-16, STORY-3):** the schema now lives in storybook_management_app. The `events` migration in Phase 1 must be added there, not in this repo.
 **Spec:** [PRD §13](PRD_storybook-lib-app.md) · **Size:** about half a day of backend work plus frontend wiring in Lovable
 
 ## Goal

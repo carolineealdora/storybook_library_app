@@ -25,11 +25,7 @@ Routes marked **🔒P** below also need `X-Parent-Token: <parent_token>`.
 - On `403 PARENT_MODE_REQUIRED`, show the PIN prompt (the same as tapping the toggle in Child view).
 
 ### Seeded mock accounts
-| Email | Password | App |
-|---|---|---|
-| `parent@mainstory.test` | `Parent123!` | Library |
-| `parent2@mainstory.test` | `Parent123!` | Library |
-| `admin@mainstory.test` | `Admin123!` | Book Management |
+Created by `make seed` in storybook_management_app from its `SEED_PARENT_*` and `SEED_ADMIN_*` env vars: one parent (Library) and one admin (Book Management). Ask the backend owner for the local values; passwords are never written in docs.
 
 ## Error codes
 

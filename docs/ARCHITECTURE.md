@@ -103,4 +103,4 @@ A second pay on the same order returns 409 `DUPLICATE_REQUEST`. To retry after a
 - Payment / orders: `internal/services/order`, `internal/services/subscription`, `internal/repositories/library/orders.go`
 - Tokens and parent mode: `internal/services/auth`, `handler/controllers/auth/controller.go`
 - PIN and Forgot PIN lockouts: `internal/services/account`
-- Schema: `migrations/*.sql` (authoritative), summarised in [DATA-MODELS.md](DATA-MODELS.md)
+- Schema: `../storybook_management_app/migrations/*.sql` (authoritative, shared database), summarised in [DATA-MODELS.md](DATA-MODELS.md)

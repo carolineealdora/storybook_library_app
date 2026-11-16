@@ -5,7 +5,11 @@ Last updated: 2026-11-16
 <!-- Empty -->
 
 ## Priority: High (significant impact, address in next sprint)
-<!-- Empty -->
+- [ ] **TD-011: Demo account passwords and bcrypt hashes remain in git history**
+  - Impact: The removed seed migration and old docs had the mock accounts' plaintext passwords, and the branch is pushed to origin. Anyone with repo access can log in wherever those accounts still exist with those passwords.
+  - Source: feat/STORY-3-shared-schema (seed migration removed from HEAD only)
+  - Created: 2026-11-16
+  - Notes: Change those passwords on any non-local DB (seed values now come from the management app's `SEED_*` env vars). Rewriting history is not planned.
 
 ## Priority: Medium (worth fixing, not urgent)
 - [ ] **TD-004: EPUB and covers are served from Postgres, fully buffered**
@@ -15,6 +19,16 @@ Last updated: 2026-11-16
   - Notes: Move to object storage with signed URLs when the catalogue grows.
 
 ## Priority: Low (nice to have)
+- [ ] **TD-009: Library writes don't maintain `updated_at` on shared tables**
+  - Impact: The shared schema (owned by storybook_management_app) has `updated_at` on `subscriptions`, `book_orders` and `subscription_orders`. This app's status updates leave it at the insert time. Nothing reads it today; it will mislead anyone who audits by it.
+  - Source: feat/STORY-3-shared-schema
+  - Created: 2026-11-16
+  - Notes: Add `updated_at = now()` to the status-changing `UPDATE`s in `internal/repositories/library`.
+- [ ] **TD-010: Schema is reached through a sibling checkout path**
+  - Impact: `make test-integration` and local setup need `../storybook_management_app`. A different layout needs `SCHEMA_DIR` set.
+  - Source: feat/STORY-3-shared-schema (management repo ADR-010)
+  - Created: 2026-11-16
+  - Notes: Move to a shared schema module or git submodule if more services join, or if CI comes back.
 - [ ] **TD-005: Auto-renew runs as an in-process hourly ticker**
   - Impact: No retry/backoff or alerting beyond an error log. Renewal can land up to 1 h after expiry. Access is unaffected because an active period stays active until it's renewed.
   - Source: feat/storybook-backend

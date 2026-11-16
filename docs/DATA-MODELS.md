@@ -1,7 +1,7 @@
 # Data Models — Storybook Library
 **Last updated:** 2026-11-16
 
-**Source of truth is the SQL in [`migrations/`](../migrations/).** This page explains the model. Read the migration before writing a query. The ER diagram is in the [PRD §12.2](PRD_storybook-lib-app.md).
+**Source of truth is the SQL in [`storybook_management_app/migrations/`](../../storybook_management_app/migrations/)**, which owns the schema this app shares (its ADR-010). This page explains the model. Read the migration before writing a query. The ER diagram is in the [PRD §12.2](PRD_storybook-lib-app.md).
 
 ---
 
@@ -16,7 +16,7 @@
 | Soft delete | Only `books.deleted_at`. Orders, purchases and subscriptions are never deleted; their `status` carries history |
 | Price snapshots | `book_orders.price`, `purchases.price_paid` and `subscriptions.price_paid` keep the price at order time (PRD E7, US-17) |
 | Idempotency | `UNIQUE (user_id, idempotency_key)` on both order tables |
-| New schema | Add a new numbered migration and list it in `migrations/migration.go`. Never edit an applied one |
+| New schema | Add a new numbered migration **in storybook_management_app** and list it in its `migrations/migration.go`. Never edit an applied one |
 
 ---
 

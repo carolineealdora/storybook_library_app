@@ -28,7 +28,7 @@
 ---
 
 ## Key files — entry points for understanding patterns
-- Entry point:        `main.go` (`run`, `migrate up|down|create`)
+- Entry point:        `main.go` (`run`)
 - Config:             `config/config.go`
 - Routes:             `handler/route.go`
 - Handler pattern:    `handler/controllers/order/controller.go`
@@ -39,13 +39,13 @@
 - Error codes:        `internal/constant/response/response.go`
 - Input validation:   `models/dto/storybook.go` (validate tags) + `internal/helper/binding.go`
 - DB pool:            `pkg/orm/postgres`
-- Migrations:         `migrations/*.sql`, listed in `migrations/migration.go`
+- Migrations:         owned by `../storybook_management_app/migrations` (its ADR-010). Never add schema here
 
 ---
 
 ## Commands
 - Run:   `make run`  (needs `JWT_SECRET`; see `.env.example`)
-- Migrate: `make migrate`
+- Migrate: `make -C ../storybook_management_app migrate`
 - Test:  `make test`  (unit, includes -race flag)
 - Integration: `make test-integration`  (needs local Postgres; wipes `storybook_test`)
 - Lint:  `make lint`  (go vet; gofmt is off until TD-008)

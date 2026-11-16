@@ -58,7 +58,7 @@ HTTP Request
 
 ```
 .
-├── main.go                   # Entry point — boots server or runs migrations
+├── main.go                   # Entry point — boots the server
 ├── handler/
 │   ├── route.go              # Route registration
 │   └── controllers/          # Handler layer — one package per domain
@@ -77,11 +77,9 @@ HTTP Request
 ├── pkg/                      # Reusable infrastructure packages
 │   ├── logger/               # Logger interface + Logrus implementation
 │   ├── orm/                  # DB connection (GORM + Postgres)
-│   ├── migrator/             # DB migration runner
 │   ├── monitor/              # APM / observability
 │   └── shared/               # Shared bootstrapping utilities
 ├── config/                   # Env var loading and config struct
-├── migrations/               # SQL migrations + runner wiring
 ├── test/mock/                # Mocks for unit testing
 ├── docs/                     # Architecture docs, API contracts, PRD templates
 ├── .claude/rules/            # Claude Code behavioral rules
@@ -97,18 +95,16 @@ HTTP Request
 
 Needs Go 1.21+ and PostgreSQL 13+.
 
-```bash
-cp .env.example .env            # set DB_* and JWT_SECRET
-createdb storybook
-make migrate                     # schema + mock accounts + subscription plan
-make run                         # API on :9999, auto-renew job runs hourly
+The database schema is owned by [`storybook_management_app`](../storybook_management_app), checked out next to this repo. Both apps share one database.
 
-# migrations
-go run . migrate up
-go run . migrate create <migration_name>   # then add it to migrations/migration.go
+```bash
+make -C ../storybook_management_app db-up migrate seed   # Postgres on :5433, schema, mock accounts + plan
+cp .env.example .env            # set DB_PASSWORD and JWT_SECRET
+make run                         # API on :9999, auto-renew job runs hourly
 ```
 
-Mock logins: `parent@mainstory.test` / `Parent123!`, `admin@mainstory.test` / `Admin123!`.
+Mock logins are whatever `SEED_PARENT_EMAIL` / `SEED_ADMIN_EMAIL` (and their passwords) are set to in the management app's `.env`.
+Schema changes go in the management repo's `migrations/` (its ADR-010). `make test-integration` applies them from `SCHEMA_DIR` (default `../storybook_management_app/migrations`).
 API reference for the frontends: [`docs/API-contracts.md`](docs/API-contracts.md).
 
 ---
@@ -173,7 +169,7 @@ docs/
 ├── PRD_storybook-lib-app.md    # Product spec: source of truth for behaviour
 ├── API-contracts.md            # Endpoints and shapes, written for the Lovable frontends
 ├── ARCHITECTURE.md             # Layers, auth model, critical flows
-├── DATA-MODELS.md              # Tables and rules (the SQL in migrations/ is authoritative)
+├── DATA-MODELS.md              # Tables and rules (the management repo's migrations/ is authoritative)
 ├── DECISIONS.md                # ADR log
 └── PLAN-analytics-events.md    # Proposed plan for PRD §13 metrics
 ```
