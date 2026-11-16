@@ -75,22 +75,16 @@ These become the test stubs in Phase 4 (TDD). Claude writes tests to match each 
 
 ```makefile
 .PHONY: done
-done: lint test build check-secrets
-	@echo ""
-	@echo "✅ Definition of Done: ALL CHECKS PASSED"
-	@echo ""
+done: lint test build
 
 lint:
-	golangci-lint run ./...
+	go vet ./... && go vet -tags integration ./handler/
 
 test:
 	go test ./... -race -cover
 
 build:
-	go build ./cmd/...
-
-check-secrets:
-	gitleaks detect --source . --no-banner
+	go build -o bin/app .
 ```
 
 For a mixed Go + Node.js project, add:
@@ -190,87 +184,31 @@ project-root/
 ├── Makefile                     # Includes `make done`
 ├── .env.example                 # Schema only — no real values ever committed
 ├── .gitignore
-├── .pre-commit-config.yaml
-├── .golangci.yml                # golangci-lint v2 config
-├── .gitleaks.toml               # Secret scan allowlists
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── API-contracts.md
 │   ├── DATA-MODELS.md
 │   └── PRD-[feature].md
-├── .claude/
-│   ├── rules/
-│   │   ├── testing.md           # TDD rules + exploration policy
-│   │   ├── security.md          # Never-do list + manual review triggers
-│   │   ├── api-patterns.md      # Endpoint conventions
-│   │   └── git.md               # Branch and commit rules
-│   └── context/                 # Optional: condensed token-saving summaries
-└── .github/
-    └── workflows/
-        └── ci.yml
+└── .claude/
+    ├── rules/
+    │   ├── testing.md           # TDD rules + exploration policy
+    │   ├── security.md          # Never-do list + manual review triggers
+    │   ├── api-patterns.md      # Endpoint conventions
+    │   └── git.md               # Branch and commit rules
+    └── context/                 # Optional: condensed token-saving summaries
 ```
 
 ### 2.2 Git discipline
 
 - Always create a feature branch before making any changes — **never commit to `main` or `develop`**
 - Branch naming: `feat/PROJ-[id]-short-description` or `fix/PROJ-[id]-description`
-- Commit format (conventional commits, enforced by pre-commit): `type(scope): description [PROJ-ID]`
+- Commit format (conventional commits): `type(scope): description [PROJ-ID]`
 - Separate commits for tests and implementation
 - Open a PR for every feature, no matter how small
 
 Full rules live in `.claude/rules/git.md` — see Reference: .claude/rules/.
 
-### 2.3 Pre-commit hooks (local enforcement)
-
-Runs automatically on every `git commit`, including commits made by Claude Code.
-
-**Install once per engineer:**
-
-```bash
-pip install pre-commit
-pre-commit install                          # activates pre-commit hook
-pre-commit install --hook-type commit-msg  # activates commit message format hook
-pre-commit run --all-files                 # first-time full-repo scan
-```
-
-**What the config covers:**
-
-| Category | Tools |
-| --- | --- |
-| General hygiene | `no-commit-to-branch`, `check-merge-conflict`, `check-added-large-files`, `detect-private-key`, `check-yaml`, `check-json` |
-| Secret scanning | gitleaks v8.24.2 — allowlists in `.gitleaks.toml` |
-| Go | `go-fmt`, `golangci-lint` (v2, local hook), `go-build`, `go-test -short` |
-| Node.js | `eslint --max-warnings 0`, `prettier --check`, `tsc --noEmit` |
-| Commit messages | Conventional commits format |
-
-> **golangci-lint v2 note:** The config format changed completely in 2025. Use `linters.default: standard` in `.golangci.yml` — the old `enable-all` / `disable-all` flags no longer exist.
-> 
-
-Update all hook versions periodically: `pre-commit autoupdate`
-
-### 2.4 CI pipeline (server-side enforcement)
-
-```yaml
-# .github/workflows/ci.yml
-name: CI
-on: [push, pull_request]
-jobs:
-  quality:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-      - run: make lint
-      - run: make test
-      - run: make build
-      - uses: gitleaks/gitleaks-action@v2
-```
-
-In GitHub → Settings → Branches → Branch protection rules: mark this CI as a **required status check**. No PR merges without it passing. This is the final hard gate.
-
-### 2.5 Token optimization tools
+### 2.3 Token optimization tools
 
 Install these once. They reduce cost and output noise across every session.
 
@@ -438,22 +376,21 @@ Without this, Claude makes "helpful" changes outside scope that silently break u
 
 ## Phase 5 — Quality Gates
 
-### 5.1 The three-layer enforcement model
+### 5.1 Enforcement
 
 | Layer | Tool | When it runs | Bypassable? |
 | --- | --- | --- | --- |
 | AI behavior | CLAUDE.md rules | Every session | Yes — Claude can drift |
-| Local | Pre-commit hooks | Every `git commit` | Only with `--no-verify` (flag any use of this) |
-| Server-side | CI pipeline | Every push / PR | No — required status check to merge |
+| Definition of Done | `make done` | Before every commit | No — never commit if it fails |
 
-All three layers must be in place. Each one backs up the layer before it.
+`make done` backs up the CLAUDE.md rules: it is the only automated gate, so it must run (and pass) before every commit.
 
 ### 5.2 Pre-merge checklist
 
 Run this before requesting any PR review:
 
 ```
-[ ] make done passes — lint, test, build, secret scan all green
+[ ] make done passes — lint, test, build all green
 [ ] PRD Implementation Status table updated with PR number
 [ ] No secrets or credentials in the diff
 [ ] Tests cover all acceptance criteria and edge cases from .claude/rules/testing.md
@@ -578,8 +515,7 @@ Run make done when complete. Show the full output.
 ```
 CLAUDE.md               tech-debt.md            .claude/rules/*.md
 PLAN.md                 docs/*.md                Makefile
-.env.example            .pre-commit-config.yaml  .golangci.yml
-                        .gitleaks.toml           .github/workflows/ci.yml
+.env.example
 ```
 
 ### Never commit
@@ -842,7 +778,7 @@ No business logic in handlers. Handlers are thin HTTP adapters only.
 ## Commit format (conventional commits)
 type(scope): description [PROJ-ID]
 
-Types: feat  fix  docs  test  refactor  chore  ci  perf
+Types: feat  fix  docs  test  refactor  chore  perf
 Example: feat(booking): add slot hold with Redis TTL [PROJ-42]
 
 Separate commits for tests then implementation:
@@ -1098,7 +1034,7 @@ NEW FEATURE — checklist
 [ ] Exit plan mode → implement phase by phase
 [ ] After each phase: run make done, update PRD status table, commit
 [ ] Open PR → run pre-merge checklist → fresh-session AI review
-[ ] Merge after CI passes
+[ ] Merge after review approval and a green make done
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 NEW SESSION — handoff prompt

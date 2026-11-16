@@ -1,175 +1,106 @@
-# Architecture Overview — Viva Sports Club Platform
-**Version:** 1.0 | **Last updated:** 2025-06-16
-**Keep this under 300 lines. Detail lives in docs/. This is the map, not the manual.**
+# Architecture Overview — Storybook Library backend
+**Last updated:** 2026-11-16
+**This is the map, not the manual.** Behaviour: [PRD](PRD_storybook-lib-app.md) · Endpoints: [API-contracts.md](API-contracts.md) · Tables: [DATA-MODELS.md](DATA-MODELS.md) · Why: [DECISIONS.md](DECISIONS.md)
 
 ---
 
-## System Purpose
+## System purpose
 
-A unified digital platform for Viva Sports Club covering court booking, member management, staff attendance, F&B (Viva Lounge), events, classes, loyalty, and business intelligence. Architected for multi-location from day one — new courts, lounges, or club locations are added via admin configuration, no code changes.
+This Go API serves only the **Digital Storybook Library** frontend (`fe_storybook_library_app`), for parent accounts: browse the showcase, buy single books, subscribe monthly, read EPUBs. It has a Parent view and a Child view; switching from Child to Parent view needs a PIN.
+
+The **Book Management** back office (admin login, book CRUD with uploads, plan pricing) is storybook_management_app, served to `fe_storybook_management_app`. It owns the shared PostgreSQL schema and its migrations (ADR-011).
+
+Login and payment are mocked for the MVP (PRD §3).
 
 ---
 
-## Tech Stack
+## Tech stack
 
 | Layer | Technology | Why |
 |---|---|---|
-| Backend API | Go 1.22 (Gin) | High concurrency for real-time slot booking; low memory overhead at scale |
-| Frontend | React / Next.js 14 | SSR for SEO (marketing site); CSR for member portal |
-| Database | PostgreSQL 16 | ACID compliance for bookings and financial transactions |
-| Cache | Redis 7 | Real-time court slot availability; session storage |
-| Payments | Xendit + QRIS | Primary gateway; QRIS for QR payment touchpoints |
-| Notifications | WhatsApp Business API + SMTP | 8 automated triggers (Phase 1); ticket system (Phase 2) |
-| Social | Instagram Graph API | Auto-sync gallery on marketing site |
-| Auth | JWT (RS256) + refresh tokens | Stateless; refresh tokens in Redis |
-| Hosting | AWS (backend) + Vercel (frontend) | Backend needs persistent compute; frontend benefits from edge CDN |
-| Search | Google Search Console | SEO indexing for marketing site |
+| API | Go 1.21, Echo v4 | The scaffold we were given |
+| Database | PostgreSQL 13+ (GORM, raw SQL) | Orders, purchases and subscriptions need transactions and constraints |
+| Files | Postgres `bytea` (EPUB in `books`, covers in `book_files`) | One store for the MVP (PRD §11). See TD-004 |
+| Auth | JWT HS256 + opaque refresh token in Postgres + parent token | Revocable sessions without Redis |
+| Jobs | In-process hourly ticker (auto-renew) | One job, idempotent. See TD-005 |
+| Frontends | Lovable (outside this repo) | — |
 
 ---
 
-## System Boundaries
+## System boundaries
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Public Web (Next.js / Vercel)                          │
-│  Marketing site · Member portal · Booking flow          │
-└──────────────────────┬──────────────────────────────────┘
-                       │ HTTPS / REST
-┌──────────────────────▼──────────────────────────────────┐
-│  Go API (AWS)                                           │
-│  Auth · Booking · Members · Staff · F&B · Reporting     │
-├──────────────┬────────────────┬───────────────────────  │
-│  PostgreSQL  │  Redis         │  Background workers      │
-│  (primary)   │  (slots/cache) │  (notifications, jobs)   │
-└──────────────┴────────────────┴───────────────────────  │
-                       │
-┌──────────────────────▼──────────────────────────────────┐
-│  External Services                                      │
-│  Xendit · QRIS · WhatsApp API · Instagram API · SMTP    │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────┐        ┌──────────────────────────────┐
+│ Library app (Lovable)        │        │ Book Management (Lovable)    │
+│ parent token on Parent view  │        │ admin token                  │
+└──────────────┬───────────────┘        └──────────────┬───────────────┘
+               │ HTTPS / REST /api/v1                  │
+┌──────────────▼─────────────────────┐  ┌──────────────▼───────────────┐
+│ This Go API (parent routes only)   │  │ storybook_management_app     │
+│ handler/  → auth, binding, JSON    │  │ admin routes, owns schema    │
+│ internal/services/  → access rules,│  │ and migrations               │
+│   checkout, PIN, renewals          │  └──────────────┬───────────────┘
+│ internal/repositories/library → SQL│                 │
+│ main.go → hourly RunRenewals       │                 │
+└──────────────┬─────────────────────┘                 │
+               └──────────────┬─────────────────────────┘
+                    ┌─────────▼─────────┐
+                    │ PostgreSQL        │
+                    │ data + EPUB/cover │
+                    └───────────────────┘
 ```
 
----
-
-## Key Architectural Decisions
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| Multi-location model | Location ID on every resource (not separate DBs) | Simpler cross-location reporting; single migration path |
-| Slot availability | Redis bitmask per court per day | Sub-10ms reads under concurrent booking load |
-| Payment flow | Server-side charge initiation + webhook confirmation | Never trust client-reported payment status |
-| Auth model | Short-lived JWT (15min) + Redis-stored refresh token | Revocable sessions; logout actually works |
-| Soft deletes | `deleted_at` timestamp on all major tables | Audit trail; cancellations preserve history |
-| Money storage | INTEGER (smallest currency unit — sen/cents) | Never store floats for money |
-| Background jobs | Go goroutines + Redis queue (Phase 1); migrate to proper queue if needed | Start simple; right-size when volume justifies it |
+No external services. Payment is a client-chosen outcome (`result: success|failed`).
 
 ---
 
-## Module Map
+## Layers
 
-### Phase 1 (MVP)
-| Module | Key entities | Owner package |
-|---|---|---|
-| Auth | users, sessions, refresh_tokens | `internal/auth` |
-| Court Booking | courts, bookings, slots, locations | `internal/booking` |
-| Member Portal | members, membership_tiers, credits_wallet | `internal/member` |
-| Staff Attendance | staff, attendance_records, shifts | `internal/attendance` |
-| F&B / Viva Lounge | menu_items, orders, pos_sessions | `internal/lounge` |
-| Classes | class_templates, class_sessions, enrollments | `internal/classes` |
-| Events | events, event_registrations, tickets | `internal/events` |
-| Pro Shop | products, inventory, purchase_orders | `internal/shop` |
-| Payments | payment_intents, transactions, webhooks | `internal/payment` |
-| Notifications | notification_log, templates, delivery_queue | `internal/notify` |
-| Admin | roles, permissions, audit_log | `internal/admin` |
-| Org Management | organizations, locations, staff_roles | `internal/org` |
+| Layer | Path | Does | Never does |
+|---|---|---|---|
+| Handler | `handler/controllers/<domain>` | Bind and validate input, read claims, call one service, write `{data}` / `{error}` | Business rules, SQL |
+| Service | `internal/services/<domain>` | Access rules, state transitions, error codes | HTTP, SQL text |
+| Repository | `internal/repositories/library` | SQL, `InTx` transactions, row locks | Business decisions |
 
-### Phase 2
-| Module | Key entities | Owner package |
-|---|---|---|
-| Matchmaking | open_matches, match_results, elo_ratings | `internal/matchmaking` |
-| Loyalty | loyalty_points, leaderboard_snapshots, rewards | `internal/loyalty` |
-| Player Stats | player_profiles, stats_snapshots | `internal/playerstats` |
-| Leagues | leagues, league_registrations, match_schedule | `internal/league` |
-| Coach Management | coaches, coach_sessions, coach_bookings | `internal/coach` |
-| Dynamic Pricing | pricing_rules, time_slots_pricing | `internal/pricing` |
-| BI Dashboard | analytics_events, report_snapshots | `internal/analytics` |
+There is one repository package on purpose: paying an order touches orders, purchases and subscriptions in one transaction.
 
 ---
 
-## Repository Structure
+## Auth model
 
+| Token | Lifetime | Where | Proves |
+|---|---|---|---|
+| Access (JWT) | 30 min | `Authorization: Bearer` | Who you are. Only parent accounts get one here |
+| Refresh (opaque, SHA-256 in DB) | 7 days, not rotated | `POST /auth/refresh` body | Session; revoked on logout |
+| Parent (JWT, role `parent_mode`) | 7 days | `X-Parent-Token` header | That this is Parent view. Issued on login, correct PIN and Forgot PIN. Refresh never issues one. |
+
+Payment and settings routes need both the access token and the parent token. Child view drops the parent token, so a child holding the session cannot buy, subscribe, cancel or change settings (TD-002).
+
+---
+
+## Critical flows
+
+**Single-book checkout (PRD US-09)**
 ```
-viva-api/                          # Go backend
-├── cmd/
-│   └── main.go                    # Entry point
-├── internal/
-│   ├── auth/
-│   ├── booking/
-│   │   ├── handler/               # HTTP layer
-│   │   ├── service/               # Business logic
-│   │   └── repository/            # DB layer
-│   ├── [other modules same pattern]
-│   ├── config/                    # Config loading (env vars)
-│   ├── db/                        # DB connection pool
-│   ├── middleware/                # Auth, logging, CORS
-│   ├── response/                  # Shared JSON response helpers
-│   └── validator/                 # Input validation helpers
-├── db/
-│   └── migrations/                # SQL migrations (numbered)
-├── CLAUDE.md
-├── PLAN.md
-├── tech-debt.md
-└── docs/
-    ├── ARCHITECTURE.md            # ← this file
-    ├── API-contracts.md
-    ├── DATA-MODELS.md
-    └── PRD-[feature].md
-
-viva-web/                          # Next.js frontend
-├── app/                           # App router
-│   ├── (marketing)/               # Public marketing pages
-│   ├── (member)/                  # Authenticated member portal
-│   └── (admin)/                   # Admin dashboard
-├── components/
-├── lib/
-│   └── api/                       # Typed API client
-└── CLAUDE.md
+POST /book-orders {book_id, idempotency_key}   → pending order, price snapshotted
+POST /book-orders/:id/pay {result}             → in one transaction:
+    lock order FOR UPDATE → re-check purchasable (published, not owned, not subscribed)
+    → success: order paid + purchase row   |   failed: order failed, 402
 ```
+A second pay on the same order returns 409 `DUPLICATE_REQUEST`. To retry after a failure, create a new order.
+
+**Subscription**: same two steps (`/subscription-orders`). Only one active subscription per user, enforced by a partial unique index. Cancelling stops access immediately.
+
+**Auto-renew (US-13)**: `RunRenewals` runs every hour. For each active period past `expires_at`, it expires the period with a conditional update, creates a new period from the old `expires_at`, and creates a paid renewal order with key `renewal:<old_id>`. It is safe to run twice or on two instances.
+
+**Reading (US-07)**: `GET /books/:id/content` checks access in this order: free → owned → subscribed → `403 BOOK_LOCKED`. The EPUB bytes are sent only after that check passes.
 
 ---
 
-## Data Flow: Court Booking (critical path)
+## Where to look before changing…
 
-```
-Member selects slot
-    → POST /api/v1/bookings/hold   (Redis lock, 5-min TTL)
-    → POST /api/v1/payments/initiate  (Xendit charge)
-    → [Xendit webhook] POST /webhooks/xendit
-    → Service confirms payment + commits booking to PostgreSQL
-    → Redis slot marked as booked
-    → WhatsApp confirmation sent via notification queue
-```
-
-**Rule:** Slot is never committed to PostgreSQL until payment webhook confirms. The Redis hold prevents double-booking during payment processing.
-
----
-
-## External Integration Touchpoints
-
-| Service | Auth method | Error handling |
-|---|---|---|
-| Xendit | API key (server-side only) | Retry with exponential backoff; webhook idempotency key |
-| QRIS | Merchant ID + secret | Same as Xendit |
-| WhatsApp Business API | Bearer token | Queue-backed; failures logged, retried 3× |
-| Instagram Graph API | OAuth access token | Best-effort; gallery sync failure non-fatal |
-| SMTP | Credentials in env | Queue-backed; same as WhatsApp |
-
----
-
-## What to read before making structural changes
-
-- Payment flow: `internal/payment/` + `docs/API-contracts.md`
-- Slot availability logic: `internal/booking/repository/slot.go`
-- Auth token lifecycle: `internal/auth/` + this doc (Auth model decision above)
-- Adding a new location: admin docs (config-only, no code change)
-- Data models: `docs/DATA-MODELS.md`
+- Access rules: `internal/services/book/service.go` (`Access`, `Visible`)
+- Payment / orders: `internal/services/order`, `internal/services/subscription`, `internal/repositories/library/orders.go`
+- Tokens and parent mode: `internal/services/auth`, `handler/controllers/auth/controller.go`
+- PIN and Forgot PIN lockouts: `internal/services/account`
+- Schema: `../storybook_management_app/migrations/*.sql` (authoritative, shared database), summarised in [DATA-MODELS.md](DATA-MODELS.md)

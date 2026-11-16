@@ -10,10 +10,9 @@
 
 | Layer | Technology |
 |-------|-----------|
-| Language | Go 1.20 |
+| Language | Go 1.21 |
 | HTTP Framework | [Echo v4](https://echo.labstack.com/) |
-| Database | PostgreSQL (via GORM) + MongoDB |
-| Cache | Redis |
+| Database | PostgreSQL (via GORM) |
 | Auth | JWT |
 | Logging | Logrus + Elastic APM |
 
@@ -59,30 +58,28 @@ HTTP Request
 
 ```
 .
-├── main.go                   # Entry point — boots server or runs migrations
+├── main.go                   # Entry point — boots the server
 ├── handler/
 │   ├── route.go              # Route registration
 │   └── controllers/          # Handler layer — one package per domain
-│       ├── healthcheck/
-│       └── payment/
+│       ├── auth/ account/ book/ order/ subscription/
+│       └── healthcheck/
 ├── internal/
 │   ├── services/             # Service layer — business logic
-│   │   ├── healthcheck/
-│   │   └── payment/
+│   │   ├── auth/ account/ book/ order/ subscription/
+│   │   └── healthcheck/
 │   ├── repositories/         # Repository layer — DB access
-│   │   ├── healthcheck/
-│   │   └── payment/
+│   │   ├── library/          # all storybook tables (shared for cross-table transactions)
+│   │   └── healthcheck/
 │   ├── helper/               # Shared internal utilities
 │   └── constant/             # Shared constants
 ├── models/                   # Data structures, DTOs, SharedHolder
 ├── pkg/                      # Reusable infrastructure packages
 │   ├── logger/               # Logger interface + Logrus implementation
 │   ├── orm/                  # DB connection (GORM + Postgres)
-│   ├── migrator/             # DB migration runner
 │   ├── monitor/              # APM / observability
 │   └── shared/               # Shared bootstrapping utilities
 ├── config/                   # Env var loading and config struct
-├── migrations/               # DB migration runner wiring
 ├── test/mock/                # Mocks for unit testing
 ├── docs/                     # Architecture docs, API contracts, PRD templates
 ├── .claude/rules/            # Claude Code behavioral rules
@@ -96,18 +93,19 @@ HTTP Request
 
 ## Running Locally
 
+Needs Go 1.21+ and PostgreSQL 13+.
+
+The database schema is owned by [`storybook_management_app`](../storybook_management_app), checked out next to this repo. Both apps share one database.
+
 ```bash
-# Install dependencies
-go mod download
-
-# Run the server
-go run main.go
-
-# Run migrations
-go run main.go migrate up
-go run main.go migrate down
-go run main.go migrate create <migration_name>
+make -C ../storybook_management_app db-up migrate seed   # Postgres on :5433, schema, mock accounts + plan
+cp .env.example .env            # set DB_PASSWORD and JWT_SECRET
+make run                         # API on :9999, auto-renew job runs hourly
 ```
+
+Mock logins are whatever `SEED_PARENT_EMAIL` / `SEED_ADMIN_EMAIL` (and their passwords) are set to in the management app's `.env`.
+Schema changes go in the management repo's `migrations/` (its ADR-010). `make test-integration` applies them from `SCHEMA_DIR` (default `../storybook_management_app/migrations`).
+API reference for the frontends: [`docs/API-contracts.md`](docs/API-contracts.md).
 
 ---
 
@@ -123,7 +121,9 @@ go build -o /go/bin/app
 ## Run Tests
 
 ```bash
-go test ./... -race -cover
+make test               # unit tests
+createdb storybook_test
+make test-integration   # end-to-end over HTTP against Postgres (wipes storybook_test)
 ```
 
 ---
@@ -142,11 +142,15 @@ This runs lint, tests, and build in one command. **Never commit if it fails.**
 
 ## Environment Variables
 
-Copy `.env.template` and fill in real values — never commit real credentials.
+Copy `.env.example` and fill in real values — never commit real credentials.
 
 | Name | Description |
 |------|-------------|
 | `ENV` | Runtime environment (`development`, `production`) |
+| `PORT` | HTTP port (default `9999`) |
+| `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL_MODE` | PostgreSQL connection |
+| `JWT_SECRET` | **Required.** HMAC key for access tokens |
+| `CORS_ALLOW_ORIGINS` | Comma-separated browser origins (default `*`) |
 
 ---
 
@@ -158,22 +162,19 @@ Copy `.env.template` and fill in real values — never commit real credentials.
 
 ---
 
-## docs/ — Templates and References (Customize as Needed)
-
-The `docs/` directory contains architecture documentation, API contract specs, data model references, and PRD templates:
+## docs/
 
 ```
 docs/
-├── ARCHITECTURE.md       # System overview and key decisions
-├── API-contracts.md      # Endpoint specs and request/response shapes
-├── DATA-MODELS.md        # Entity definitions and relationships
-├── DECISIONS.md          # Architectural decision log
-└── PRD-[feature].md      # Per-feature product brief template
+├── PRD_storybook-lib-app.md    # Product spec: source of truth for behaviour
+├── API-contracts.md            # Endpoints and shapes, written for the Lovable frontends
+├── ARCHITECTURE.md             # Layers, auth model, critical flows
+├── DATA-MODELS.md              # Tables and rules (the management repo's migrations/ is authoritative)
+├── DECISIONS.md                # ADR log
+└── PLAN-analytics-events.md    # Proposed plan for PRD §13 metrics
 ```
 
-> **These documents are starting points, not mandates.** Adapt the structure, level of detail, and format to fit your team and feature. The goal is for the team and Claude to have shared context — not to maintain perfect documentation for its own sake. Skip sections that don't apply. Expand sections that matter for your feature.
-
-The `.claude/rules/` files follow the same principle — they are defaults that can and should be adjusted as the project evolves.
+The `.claude/rules/` files are Claude Code's working rules for this repo. Adjust them as the project evolves.
 
 ---
 

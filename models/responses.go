@@ -2,20 +2,14 @@ package models
 
 import "github.com/labstack/echo/v4"
 
-type BaseResponses struct {
-	ResponseCode string      `json:"responseCode"`
-	ResponseDesc string      `json:"responseDesc"`
-	ResponseData interface{} `json:"responseData"`
-}
-
 type ResponsePayload struct {
-	Code     string `json:"response_code"`
-	Desc     string `json:"response_desc"`
+	Message  string
 	HttpCode int
 }
 
 type ResponseArgs struct {
 	Ctx       echo.Context
 	RespData  interface{}
+	Meta      interface{} // list endpoints: page info, omitted when nil
 	ErrorData error
 }

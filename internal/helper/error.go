@@ -1,6 +1,7 @@
 package helpers
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -28,8 +29,8 @@ type (
 	}
 )
 
-func (l *LogEntry) Error() (resp string) {
-	return
+func (l *LogEntry) Error() string {
+	return l.ErrConst + ": " + l.ErrInfo
 }
 
 func NewError(sharedHolder *models.SharedHolder) Error {
@@ -43,8 +44,7 @@ func (e *ErrorImpl) Wrap(errConst, errInfo string) error {
 		component, srcFile, srcFunc string
 		errWrap                     bool
 		allowlistDomains            = []string{
-			respConst.INVALID_REQUEST_HEADER,
-			respConst.MANDATORY_FIELD,
+			respConst.VALIDATION_ERROR,
 		}
 	)
 
@@ -75,4 +75,14 @@ func (e *ErrorImpl) Wrap(errConst, errInfo string) error {
 		SrcFile:   srcFile,
 		SrcFunc:   srcFunc,
 	}
+}
+
+// Coded returns err unchanged when it already carries a response code (e.g. it came back out
+// of a transaction), and wraps anything else as GENERAL_ERROR.
+func Coded(errs Error, err error) error {
+	var e *LogEntry
+	if errors.As(err, &e) {
+		return e
+	}
+	return errs.Wrap(respConst.GENERAL_ERROR, err.Error())
 }
