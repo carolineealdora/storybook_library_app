@@ -40,7 +40,7 @@ func TestGetItems_AllItemsFull_ReturnsEmptyList(t *testing.T)
 - Use real test DB via your testutil helpers — never mock the DB layer
 - Seed data with a fixtures pattern
 - Clean up after each test (use `t.Cleanup`)
-- Tag integration tests: `//go:build integration` — these run in CI only, not pre-commit
+- Tag integration tests: `//go:build integration`. Run them locally with `make test-integration` (needs Postgres); they are not part of `make done`
 
 **Service tests:**
 - Mock the repository interface — do not hit the DB
