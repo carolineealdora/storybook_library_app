@@ -11,7 +11,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"codebase/internal/services/auth"
 	"codebase/internal/services/subscription"
 	"codebase/models"
 
@@ -173,21 +173,33 @@ func parentCall(t *testing.T, method, path, token, parentToken string, body any)
 	return send(t, req, token)
 }
 
-func form(t *testing.T, method, path, token string, fields map[string]string, files map[string][2]string) result {
+// ---- back-office fixtures ----
+// Admin writes happen in storybook_management_app (ADR-011 there); the tests stand in with SQL.
+
+func insertBook(t *testing.T, title string, ageMin int, ageMax *int, price int, status, epub, cover string) string {
 	t.Helper()
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	for k, v := range fields {
-		w.WriteField(k, v)
+	ageType := "plus"
+	if ageMax != nil {
+		ageType = "range"
 	}
-	for field, f := range files { // f = {filename, content}
-		fw, _ := w.CreateFormFile(field, f[0])
-		fw.Write([]byte(f[1]))
+	var id string
+	if err := holder.Sql.RawSql(`INSERT INTO books (title, author, description, age_type, age_min, age_max, price, status, epub_file_name, epub_size_bytes, epub_content)
+		VALUES (?, 'Kak Seto', 'A story', ?, ?, ?, ?, ?, 'story.epub', ?, ?) RETURNING id`,
+		&id, title, ageType, ageMin, ageMax, price, status, len(epub), []byte(epub)); err != nil {
+		t.Fatal(err)
 	}
-	w.Close()
-	req := httptest.NewRequest(method, "/api/v1"+path, &buf)
-	req.Header.Set("Content-Type", w.FormDataContentType())
-	return send(t, req, token)
+	if err := holder.Sql.Exec(`INSERT INTO book_files (book_id, mime_type, file_name, size_bytes, content) VALUES (?, 'image/png', 'cover.png', ?, ?)`,
+		id, len(cover), []byte(cover)); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func adminSQL(t *testing.T, query string, args ...any) {
+	t.Helper()
+	if err := holder.Sql.Exec(query, args...); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func decode[T any](t *testing.T, r result) T {
@@ -277,68 +289,52 @@ func TestLibraryEndToEnd(t *testing.T) {
 	// US-01 / US-15 / E17 / E19
 	expect(t, call(t, "POST", "/auth/login", "", map[string]string{"email": parentEmail, "password": "nope"}), 401, "INVALID_CREDENTIALS")
 	expect(t, call(t, "POST", "/auth/login", "", map[string]string{"email": "ghost@x.test", "password": "nope"}), 401, "INVALID_CREDENTIALS")
-	expect(t, call(t, "POST", "/admin/auth/login", "", map[string]string{"email": parentEmail, "password": parentPass}), 403, "FORBIDDEN")
+	expect(t, call(t, "POST", "/auth/login", "", map[string]string{"email": adminEmail, "password": adminPass}), 403, "FORBIDDEN")
 	parent, parentRefresh, pt := login(t, "/auth/login", "PARENT@mainstory.test", parentPass) // email is case-insensitive
 	parent2, _, pt2 := login(t, "/auth/login", parent2Email, parentPass)
-	admin, adminRefresh, adminPT := login(t, "/admin/auth/login", adminEmail, adminPass)
-	if pt == "" || adminPT != "" {
-		t.Fatalf("parent login must return a parent_token, admin login must not (got %q / %q)", pt, adminPT)
+	if pt == "" {
+		t.Fatal("parent login must return a parent_token")
 	}
 	expect(t, call(t, "GET", "/books", "", nil), 401, "UNAUTHORIZED")
 	expect(t, call(t, "GET", "/books", "garbage", nil), 401, "UNAUTHORIZED")
-	expect(t, call(t, "GET", "/admin/books", parent, nil), 403, "FORBIDDEN")
-	expect(t, call(t, "GET", "/books", admin, nil), 403, "FORBIDDEN")
 	expect(t, call(t, "GET", "/nope", parent, nil), 404, "NOT_FOUND")
 
-	// US-16: admin creates books; E15 / E16 validation
-	newBook := func(title, price, status string) string {
-		r := form(t, "POST", "/admin/books", admin, map[string]string{"title": title, "author": "Kak Seto", "description": "A story",
-			"age_type": "range", "age_min": "1", "age_max": "3", "price": price, "status": status},
-			map[string][2]string{"cover": cover, "epub": epub})
-		expect(t, r, 200, "")
-		return decode[bookDTO](t, r).ID
-	}
-	free := newBook("Free Book", "0", "published")
-	bookA := newBook("Book A", "15000", "published")
-	bookB := newBook("Book B", "20000", "published")
-	draft := newBook("Draft Book", "10000", "draft")
-	bad := func(fields map[string]string, files map[string][2]string, code string) {
-		t.Helper()
-		base := map[string]string{"title": "X", "author": "Y", "description": "Z", "age_type": "range", "age_min": "1", "age_max": "3", "price": "1", "status": "draft"}
-		for k, v := range fields {
-			base[k] = v
+	// STORY-4: this backend serves only fe_storybook_library_app. The back office lives in
+	// storybook_management_app, so no admin route exists here and admin sessions get nothing.
+	for _, route := range [][2]string{
+		{"POST", "/admin/auth/login"}, {"POST", "/admin/auth/logout"},
+		{"GET", "/admin/books"}, {"POST", "/admin/books"}, {"GET", "/admin/books/" + parentEmail},
+		{"PUT", "/admin/books/x"}, {"DELETE", "/admin/books/x"}, {"GET", "/admin/books/x/cover"},
+		{"GET", "/admin/subscription-plan"}, {"PUT", "/admin/subscription-plan"}, {"GET", "/admin/subscription-plan/history"},
+	} {
+		if r := call(t, route[0], route[1], parent, nil); r.Status != 404 {
+			t.Fatalf("%s %s = %d, want 404 (admin routes live in storybook_management_app)", route[0], route[1], r.Status)
 		}
-		if files == nil {
-			files = map[string][2]string{"cover": cover, "epub": epub}
-		}
-		expect(t, form(t, "POST", "/admin/books", admin, base, files), 400, code)
 	}
-	bad(nil, map[string][2]string{"cover": {"c.gif", "GIF89a..."}, "epub": epub}, "INVALID_FILE_FORMAT")
-	bad(nil, map[string][2]string{"cover": cover, "epub": {"b.pdf", "%PDF-1.4"}}, "INVALID_FILE_FORMAT")
-	bad(map[string]string{"age_min": "5", "age_max": "3"}, nil, "INVALID_AGE_RANGE")
-	bad(map[string]string{"age_min": "1.5"}, nil, "INVALID_AGE_RANGE")
-	bad(map[string]string{"price": "-1"}, nil, "VALIDATION_ERROR")
-	bad(nil, map[string][2]string{"cover": cover}, "VALIDATION_ERROR") // epub missing
-	plus := form(t, "PUT", "/admin/books/"+draft, admin, map[string]string{"title": "Draft Book", "author": "A", "description": "D",
-		"age_type": "plus", "age_min": "3", "price": "10000", "status": "draft"}, nil)
-	expect(t, plus, 200, "")
-	if got := decode[bookDTO](t, plus).AgeLabel; got != "3+" {
-		t.Fatalf("age label = %q, want 3+", got)
+	adminTokens, err := auth.NewService(&holder).Login(adminEmail, adminPass, models.AccountAdmin) // as if issued elsewhere
+	if err != nil {
+		t.Fatal(err)
 	}
-	adminList := decode[[]bookDTO](t, call(t, "GET", "/admin/books?status=draft&search=draft", admin, nil))
-	if len(adminList) != 1 || adminList[0].ID != draft {
-		t.Fatalf("admin search/filter = %+v", adminList)
-	}
-	if r := call(t, "GET", "/admin/books/"+draft+"/cover", admin, nil); r.Status != 200 || r.Header.Get("Content-Type") != "image/png" {
-		t.Fatalf("admin cover: %d %s", r.Status, r.Header.Get("Content-Type"))
-	}
+	expect(t, call(t, "GET", "/books", adminTokens.AccessToken, nil), 403, "FORBIDDEN")
+	// refresh_tokens is shared with storybook_management_app: its admin refresh tokens must not work here
+	adminSQL(t, `INSERT INTO refresh_tokens (credential_id, token_hash, expires_at)
+		SELECT id, encode(sha256('mgmt-admin-rt'::bytea), 'hex'), now() + interval '7 days' FROM credentials WHERE email = ?`, adminEmail)
+	expect(t, call(t, "POST", "/auth/refresh", "", map[string]string{"refresh_token": "mgmt-admin-rt"}), 401, "UNAUTHORIZED")
+	expect(t, call(t, "POST", "/auth/refresh", "", map[string]string{"refresh_token": adminTokens.RefreshToken}), 401, "UNAUTHORIZED")
+
+	// Catalogue, as the back office would have created it
+	oneToThree := 3
+	free := insertBook(t, "Free Book", 3, nil, 0, "published", epub[1], cover[1])
+	bookA := insertBook(t, "Book A", 1, &oneToThree, 15000, "published", epub[1], cover[1])
+	bookB := insertBook(t, "Book B", 1, &oneToThree, 20000, "published", epub[1], cover[1])
+	draft := insertBook(t, "Draft Book", 1, &oneToThree, 10000, "draft", epub[1], cover[1])
 
 	// US-04: showcase. Drafts hidden; access per book.
 	books := decode[[]bookDTO](t, call(t, "GET", "/books", parent, nil))
 	if len(books) != 3 || findBook(books, draft) != nil {
 		t.Fatalf("showcase should hold 3 published books, got %+v", books)
 	}
-	if findBook(books, free).Access != "free" || findBook(books, bookA).Access != "locked" || findBook(books, bookA).AgeLabel != "1–3" {
+	if findBook(books, free).Access != "free" || findBook(books, free).AgeLabel != "3+" || findBook(books, bookA).Access != "locked" || findBook(books, bookA).AgeLabel != "1–3" {
 		t.Fatalf("showcase access wrong: %+v", books)
 	}
 	// TD-003: pagination
@@ -355,9 +351,6 @@ func TestLibraryEndToEnd(t *testing.T) {
 	}
 	expect(t, call(t, "GET", "/books?page_size=101", parent, nil), 400, "VALIDATION_ERROR")
 	expect(t, call(t, "GET", "/books?page=-1", parent, nil), 400, "VALIDATION_ERROR")
-	if r := call(t, "GET", "/admin/books?page_size=1", admin, nil); len(decode[[]bookDTO](t, r)) != 1 || r.Meta.Total != 4 {
-		t.Fatalf("admin page = %s meta %+v", r.Data, r.Meta)
-	}
 	expect(t, call(t, "GET", "/books/"+draft, parent, nil), 404, "BOOK_NOT_FOUND") // E22
 	expect(t, call(t, "GET", "/books/not-a-uuid", parent, nil), 400, "VALIDATION_ERROR")
 
@@ -392,8 +385,7 @@ func TestLibraryEndToEnd(t *testing.T) {
 	}
 	expect(t, parentCall(t, "POST", "/book-orders", parent, pt, map[string]string{"book_id": bookA, "idempotency_key": "k-a1"}), 409, "DUPLICATE_REQUEST") // E8
 	// E7: admin raises the price while the parent is on checkout
-	expect(t, form(t, "PUT", "/admin/books/"+bookA, admin, map[string]string{"title": "Book A", "author": "Kak Seto", "description": "A story",
-		"age_type": "range", "age_min": "1", "age_max": "3", "price": "99000", "status": "published"}, nil), 200, "")
+	adminSQL(t, `UPDATE books SET price = 99000, updated_at = now() WHERE id = ?`, bookA)
 	expect(t, parentCall(t, "POST", "/book-orders/"+orderA.ID+"/pay", parent2, pt2, map[string]string{"result": "success"}), 404, "ORDER_NOT_FOUND") // not yours
 	expect(t, parentCall(t, "POST", "/book-orders/"+orderA.ID+"/pay", parent, pt, map[string]string{"result": "maybe"}), 400, "VALIDATION_ERROR")
 	r = parentCall(t, "POST", "/book-orders/"+orderA.ID+"/pay", parent, pt, map[string]string{"result": "success"})
@@ -417,8 +409,7 @@ func TestLibraryEndToEnd(t *testing.T) {
 	expect(t, r, 200, "")
 	orderB2 := decode[orderDTO](t, r)
 	unpublishB := func(status string) {
-		expect(t, form(t, "PUT", "/admin/books/"+bookB, admin, map[string]string{"title": "Book B", "author": "Kak Seto", "description": "A story",
-			"age_type": "range", "age_min": "1", "age_max": "3", "price": "20000", "status": status}, nil), 200, "")
+		adminSQL(t, `UPDATE books SET status = ?, updated_at = now() WHERE id = ?`, status, bookB)
 	}
 	unpublishB("draft")
 	expect(t, parentCall(t, "POST", "/book-orders/"+orderB2.ID+"/pay", parent, pt, map[string]string{"result": "success"}), 409, "BOOK_UNAVAILABLE")
@@ -481,29 +472,11 @@ func TestLibraryEndToEnd(t *testing.T) {
 	expect(t, parentCall(t, "POST", "/subscription-orders", parent, pt, map[string]any{"idempotency_key": "s-3", "expected_price": plan.Price}), 409, "SUBSCRIPTION_ACTIVE") // E3
 
 	// US-17 / CR-001-2: a plan price change applies to new subscriptions and the next renewal only
-	setPlan := func(token string, price any) result {
-		return call(t, "PUT", "/admin/subscription-plan", token, map[string]any{"price": price, "benefits": "All books"})
+	setPlanPrice := func(price int) { // what PUT /admin/subscription-plan does in storybook_management_app
+		adminSQL(t, `UPDATE subscription_plans SET price = ?, updated_at = now()`, price)
 	}
-	expect(t, setPlan(admin, 0), 400, "INVALID_PRICE")                                                                     // T8 / E-CR2
-	expect(t, setPlan(admin, -5), 400, "INVALID_PRICE")                                                                    // T8
-	expect(t, call(t, "PUT", "/admin/subscription-plan", admin, map[string]any{"benefits": "x"}), 400, "VALIDATION_ERROR") // price missing
-	expect(t, setPlan(parent, 59000), 403, "FORBIDDEN")                                                                    // T9 / E-CR3
-	expect(t, setPlan(admin, 59000), 200, "")                                                                              // P1
-	if r := setPlan(admin, 59000); r.Status != 200 || decode[struct{ Price int }](t, r).Price != 59000 {                   // E-CR6: same price is a no-op
-		t.Fatalf("same-price update: %d %s", r.Status, r.Body)
-	}
-	expect(t, setPlan(admin, 69000), 200, "") // second change before the renewal (P5 / E-CR4)
-	type change struct {
-		OldPrice  int    `json:"old_price"`
-		NewPrice  int    `json:"new_price"`
-		ChangedBy string `json:"changed_by_name"`
-	}
-	hist := call(t, "GET", "/admin/subscription-plan/history", admin, nil)
-	if h := decode[[]change](t, hist); hist.Meta.Total != 2 || h[0].OldPrice != 59000 || h[0].NewPrice != 69000 ||
-		h[1].OldPrice != plan.Price || h[1].NewPrice != 59000 || h[0].ChangedBy == "" {
-		t.Fatalf("price history = %+v meta %+v", h, hist.Meta)
-	}
-	expect(t, call(t, "GET", "/admin/subscription-plan/history", parent, nil), 403, "FORBIDDEN")
+	setPlanPrice(59000) // P1
+	setPlanPrice(69000) // second change before the renewal (P5 / E-CR4)
 	// T4 / P2: the running period keeps its price; /me announces the next renewal price
 	if me := decode[meDTO](t, call(t, "GET", "/me", parent, nil)); me.Subscription == nil || me.Subscription.ID != first.ID ||
 		me.Subscription.PricePaid != plan.Price || me.Subscription.NextRenewalPrice != 69000 || !me.Subscription.PriceChangePending {
@@ -567,8 +540,7 @@ func TestLibraryEndToEnd(t *testing.T) {
 	}
 
 	// US-08 / E5: soft delete hides from the shelf, owners keep it
-	expect(t, call(t, "DELETE", "/admin/books/"+bookA, admin, nil), 200, "")
-	expect(t, call(t, "DELETE", "/admin/books/"+bookA, admin, nil), 404, "BOOK_NOT_FOUND")
+	adminSQL(t, `UPDATE books SET deleted_at = now() WHERE id = ?`, bookA)
 	if findBook(decode[[]bookDTO](t, call(t, "GET", "/books", parent, nil)), bookA) != nil {
 		t.Fatal("deleted book still on the shelf")
 	}
@@ -644,7 +616,6 @@ func TestLibraryEndToEnd(t *testing.T) {
 	}
 	expect(t, call(t, "POST", "/auth/logout", parent, map[string]string{"refresh_token": parentRefresh}), 200, "")
 	expect(t, call(t, "POST", "/auth/refresh", "", map[string]string{"refresh_token": parentRefresh}), 401, "UNAUTHORIZED")
-	expect(t, call(t, "POST", "/admin/auth/logout", admin, map[string]string{"refresh_token": adminRefresh}), 200, "")
 	_, oldRefresh, _ := login(t, "/auth/login", parentEmail, parentPass)
 	holder.Sql.Exec(`UPDATE refresh_tokens SET expires_at = now() - interval '1 second' WHERE revoked_at IS NULL`)
 	expect(t, call(t, "POST", "/auth/refresh", "", map[string]string{"refresh_token": oldRefresh}), 401, "REFRESH_TOKEN_EXPIRED")
