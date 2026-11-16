@@ -131,6 +131,12 @@ func (s *Service) Refresh(refreshToken string) (*Tokens, error) {
 	if !s.now().Before(t.ExpiresAt) {
 		return nil, s.errors.Wrap(respConst.REFRESH_TOKEN_EXPIRED, "refresh: token expired")
 	}
+	// SECURITY: manual review required
+	// refresh_tokens is shared with storybook_management_app; its admin tokens must not mint
+	// access tokens here. Answer as for an unknown token.
+	if t.AccountType != models.AccountParent {
+		return nil, s.errors.Wrap(respConst.UNAUTHORIZED, "refresh: "+t.AccountType+" token on the library API")
+	}
 	return s.issueAccess(t.CredentialID, t.AccountType, t.UserID, t.AdminID)
 }
 

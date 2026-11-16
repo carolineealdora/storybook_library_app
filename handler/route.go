@@ -47,17 +47,17 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 
 	parent := authCtrl.Require(models.AccountParent)
 	parentView := authCtrl.RequireParentMode // money and settings: not reachable from Child view
-	admin := authCtrl.Require(models.AccountAdmin)
-	uploadLimit := middleware.BodyLimit("60M") // 50 MB EPUB + 5 MB cover + form fields
 
 	//insert route here
+	// SECURITY: manual review required
+	// This backend serves only fe_storybook_library_app. The back office (admin login, books,
+	// plan pricing) lives in storybook_management_app, which owns the shared schema.
 	v1 := e.Group("/api/v1")
 
 	// PUBLIC
 	v1.GET("/healthcheck", healthcheckCtrl.GetHealthcheck)
 	v1.POST("/auth/login", authCtrl.Login)
 	v1.POST("/auth/refresh", authCtrl.Refresh)
-	v1.POST("/admin/auth/login", authCtrl.AdminLogin)
 
 	// Digital Storybook Library app (parent)
 	v1.POST("/auth/logout", authCtrl.Logout, parent)
@@ -79,18 +79,6 @@ func InitRoute(sharedHolder *models.SharedHolder) {
 	v1.POST("/subscription-orders/:id/pay", subscriptionCtrl.PayOrder, parent, parentView)
 	v1.POST("/subscriptions/current/cancel", subscriptionCtrl.Cancel, parent, parentView)
 	v1.GET("/subscriptions", subscriptionCtrl.History, parent)
-
-	// Book Management app (admin)
-	v1.POST("/admin/auth/logout", authCtrl.Logout, admin)
-	v1.GET("/admin/books", bookCtrl.AdminList, admin)
-	v1.GET("/admin/books/:id", bookCtrl.AdminGet, admin)
-	v1.GET("/admin/books/:id/cover", bookCtrl.AdminCover, admin)
-	v1.POST("/admin/books", bookCtrl.AdminCreate, admin, uploadLimit)
-	v1.PUT("/admin/books/:id", bookCtrl.AdminUpdate, admin, uploadLimit)
-	v1.DELETE("/admin/books/:id", bookCtrl.AdminDelete, admin)
-	v1.GET("/admin/subscription-plan", subscriptionCtrl.Plan, admin)
-	v1.PUT("/admin/subscription-plan", subscriptionCtrl.UpdatePlan, admin)
-	v1.GET("/admin/subscription-plan/history", subscriptionCtrl.PriceHistory, admin)
 }
 
 // errorHandler gives router/framework errors (404, 405, 413, panics) the same
