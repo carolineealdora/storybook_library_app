@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Type** | Change Request (addendum to PRD v0.1) |
-| **Status** | Ready for implementation |
+| **Status** | Implemented (backend) on `feat/CR-001-badge-and-plan-pricing`. See §6 for how it maps onto the existing system |
 | **Last updated** | 2026-11-16 |
 | **Affects** | Backend API, Customer App, Back-Office App |
 
@@ -184,3 +184,23 @@ with HTTP **409**.
 - Proration or refunds on price decreases
 - Multiple plans (annual, family). The data model supports them, but the UI does not.
 - Notifying subscribers by email about price changes (in-app notice only)
+
+---
+
+## 6. Implementation Notes (backend, 2026-11-16)
+
+Decided with the product owner during review. Rationale: [DECISIONS.md ADR-010](DECISIONS.md).
+
+| CR item | As implemented | Why |
+|---|---|---|
+| Renewal (§3.3 `POST /payments/subscription/renew`, §5 "no scheduler") | **Not built.** The existing hourly auto-renew charges the plan price current at renewal time | PRD US-10/US-13 require auto-renew; a manual renew while active would charge the new price before `expires_at` (against P2). E-CR5 / T10 / `NO_ACTIVE_SUBSCRIPTION` therefore do not apply |
+| `subscriptions.renewed_at`, renew "extends `expires_at`" | Not added. Each renewal is a new period row (`renewed_from_id`, `started_at`) | PRD US-13: Subscription History shows one row per period |
+| `subscriptions.plan_id`, `price_paid` | Already existed | — |
+| `subscription_plans` "new table" | Existing table extended with `code`, `name`, `updated_by`; `benefits` kept | PRD US-17 needs benefits |
+| `duration_days` = 30 | Not added; one calendar month as before | PRD: "one month from the start" |
+| `updated_by` / `changed_by` → `users.id` | → `admins.id` | Admins live in `admins` |
+| B1 `expires_at > now` | `plan_status` = `subscribed` while `status = active` (same rule as book access) | Avoids "Free" while books are still unlocked during the ≤ 1 h renewal gap |
+| `GET /subscription-plan`, `POST /payments/subscription` | Existing `GET /subscription/plan`, `POST /subscription-orders` → `/:id/pay` | Keeps the frontend contract |
+| `expected_price` "in payment requests" | Sent on `POST /subscription-orders`; `/pay` charges the order's snapshot price | Same rule as book checkout (PRD E7) |
+| `GET /me` | Adds `plan_status`, `subscription.next_renewal_price`, `subscription.price_change_pending`; keeps `is_subscriber` | Older clients keep working |
+| Price history | `GET /admin/subscription-plan/history` (paginated) | For the back-office plan page |

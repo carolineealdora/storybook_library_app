@@ -38,6 +38,7 @@ Routes marked **🔒P** below also need `X-Parent-Token: <parent_token>`.
 | 400 | `VALIDATION_ERROR` | Missing/invalid field (message names the field) |
 | 400 | `INVALID_FILE_FORMAT` | Cover not .jpg/.jpeg/.png, or book not .epub |
 | 400 | `INVALID_AGE_RANGE` | Age not a whole number, or min ≥ max |
+| 400 | `INVALID_PRICE` | Subscription plan price ≤ 0 (CR-001) |
 | 401 | `INVALID_CREDENTIALS` | Wrong email or password ("Email or password is incorrect") |
 | 401 | `UNAUTHORIZED` | No/invalid token, or revoked refresh token |
 | 401 | `TOKEN_EXPIRED` | Access token expired → refresh |
@@ -48,6 +49,7 @@ Routes marked **🔒P** below also need `X-Parent-Token: <parent_token>`.
 | 403 | `FORBIDDEN` | Wrong account type for this app/route |
 | 403 | `BOOK_LOCKED` | Book content requested without access |
 | 404 | `BOOK_NOT_FOUND` / `ORDER_NOT_FOUND` / `NOT_FOUND` | Missing, unpublished, or not yours |
+| 409 | `PRICE_CHANGED` | Subscription `expected_price` ≠ current plan price → re-read the plan, ask the parent to confirm again (CR-001) |
 | 409 | `BOOK_ALREADY_OWNED` · `SUBSCRIPTION_ACTIVE` · `BOOK_UNAVAILABLE` · `BOOK_NOT_PURCHASABLE` · `DUPLICATE_REQUEST` · `PIN_NOT_SET` · `SUBSCRIPTION_NOT_ACTIVE` | PRD edge cases E1–E14 |
 | 429 | `TOO_MANY_ATTEMPTS` | 5 wrong PINs → PIN locked for 1 minute. 4 wrong passwords on Forgot PIN → that is locked for 1 minute (separately) |
 | 500 | `GENERAL_ERROR` | Unexpected; details only in server logs |
@@ -80,8 +82,27 @@ Routes marked **🔒P** below also need `X-Parent-Token: <parent_token>`.
   "order_type": "new" }         // history only: "new" | "renewal"
 
 // SubscriptionPlan
-{ "id": "uuid", "price": 49000, "benefits": "…", "duration": "1 month", "updated_at": "…" }
+{ "id": "uuid", "code": "monthly", "name": "Monthly Subscription", "price": 49000,
+  "benefits": "…", "duration": "1 month", "updated_at": "…" }
+
+// GET /me (CR-001)
+{ "id": "uuid", "name": "…", "email": "…", "pin_set": true,
+  "plan_status": "subscribed",   // "subscribed" | "free" → badge "Subscribed" | "Free"
+  "is_subscriber": true,         // same meaning, kept for older clients
+  "subscription": {              // null when plan_status = "free"
+    …Subscription fields…,
+    "next_renewal_price": 59000, // current plan price = what the next auto-renewal charges
+    "price_change_pending": true // next_renewal_price ≠ price_paid → show the price-change notice
+  } }
+
+// PlanPriceChange (admin price history)
+{ "id": "uuid", "old_price": 49000, "new_price": 59000,
+  "changed_by": "uuid", "changed_by_name": "…", "changed_at": "…" }
 ```
+
+**Account badge (CR-001-1):** show **Subscribed** when `plan_status = "subscribed"`, otherwise **Free**, in the header of both views. Read `plan_status`; fall back to `is_subscriber` if absent. Re-fetch `/me` after a successful subscription payment or cancel so the badge changes without a reload. Purchased books never change the badge.
+
+**Price-change notice (CR-001-2):** when `subscription.price_change_pending` is true, show on the Subscription page / Settings: *"Your subscription price will change from Rp [price_paid] to Rp [next_renewal_price] on your next renewal ([expires_at date])."*
 
 **Which button to show on Book Detail (US-06), from `access`:**
 `locked` → Buy Now + subscription prompt · `subscribed` → disabled "Subscribed" + Read · `owned` / `free` → Read.
@@ -93,7 +114,7 @@ Routes marked **🔒P** below also need `X-Parent-Token: <parent_token>`.
 | POST | `/auth/login` *(public)* | `{email, password}` | `{access_token, refresh_token, token_type, expires_in, refresh_expires_at, account_type, parent_token, parent_token_expires_in}` |
 | POST | `/auth/refresh` *(public)* | `{refresh_token}` | `{access_token, token_type, expires_in, account_type}` |
 | POST | `/auth/logout` | `{refresh_token}` | `{logged_out: true}` |
-| GET | `/me` | — | `{id, name, email, pin_set, is_subscriber, subscription: Subscription \| null}` |
+| GET | `/me` | — | see the `GET /me` shape above |
 | PATCH 🔒P | `/me` | `{name}` | same as GET /me |
 | PUT 🔒P | `/me/pin` | `{pin, pin_confirmation, password?}` | `{pin_set: true}`. `pin` is 4 digits. `password` is required only when a PIN already exists |
 | POST | `/me/pin/verify` | `{pin}` | `{verified: true, parent_token, parent_token_expires_in}` → switch to Parent view. Errors: `PIN_NOT_SET`, `INVALID_PIN`, `TOO_MANY_ATTEMPTS` |
@@ -107,10 +128,12 @@ Routes marked **🔒P** below also need `X-Parent-Token: <parent_token>`.
 | POST 🔒P | `/book-orders/:id/pay` | `{result: "success" \| "failed"}` | `BookOrder` (paid), or `402 PAYMENT_FAILED` |
 | GET | `/book-orders?page=&page_size=` | — | `BookOrder[]`: Order History (paid + failed only), newest first |
 | GET | `/subscription/plan` | — | `SubscriptionPlan` |
-| POST 🔒P | `/subscription-orders` | `{idempotency_key}` | subscription order `{id, price, status, order_type, …}` |
+| POST 🔒P | `/subscription-orders` | `{idempotency_key, expected_price}` | subscription order `{id, price, status, order_type, …}`. `expected_price` = the price the paywall showed; mismatch → `409 PRICE_CHANGED` |
 | POST 🔒P | `/subscription-orders/:id/pay` | `{result: "success" \| "failed"}` | `Subscription` (active), or `402 PAYMENT_FAILED` |
 | POST 🔒P | `/subscriptions/current/cancel` | — | `Subscription` (cancelled). Access stops immediately |
 | GET | `/subscriptions?page=&page_size=` | — | `Subscription[]`: Subscription History, newest first |
+
+**Subscription paywall (CR-001):** show the price from `GET /subscription/plan` and send it back as `expected_price`. On `409 PRICE_CHANGED`, reload the plan, show the new price and ask again.
 
 **Checkout flow (US-09):** Buy Now → `POST /book-orders` with a fresh `idempotency_key` (e.g. `crypto.randomUUID()`), then show Checkout with the order's `price`. Pay → `POST /book-orders/:id/pay`. A second Pay on the same order returns `409 DUPLICATE_REQUEST`. After `402`, retry by creating a new order. Subscriptions follow the same two steps.
 
@@ -131,6 +154,9 @@ Routes marked **🔒P** below also need `X-Parent-Token: <parent_token>`.
 | PUT | `/admin/books/:id` | multipart form ↓ (files optional) | `Book` |
 | DELETE | `/admin/books/:id` | — | `{deleted: true}` (soft delete) |
 | GET | `/admin/subscription-plan` | — | `SubscriptionPlan` |
-| PUT | `/admin/subscription-plan` | `{price, benefits}` | `SubscriptionPlan`. `price` is a whole number > 0 |
+| PUT | `/admin/subscription-plan` | `{price, benefits}` | `SubscriptionPlan`. `price` ≤ 0 → `400 INVALID_PRICE`. A price change is logged in the history; the same price is a no-op |
+| GET | `/admin/subscription-plan/history?page=&page_size=` | — | `PlanPriceChange[]`, newest first |
+
+**Subscription Plan page (CR-001-2):** show the current price, the edit form and the history. Before saving a new price, confirm: *"New subscribers will pay Rp [new] immediately. Existing subscribers will pay Rp [new] from their next renewal."* Existing subscribers keep `price_paid` until `expires_at`; the automatic renewal then charges the price current at that moment.
 
 **Book form (`multipart/form-data`):** `title`, `author`, `description`, `age_type` (`range` \| `plus`), `age_min`, `age_max` (range only), `price` (whole number ≥ 0), `status` (`draft` \| `published`), file `cover` (.jpg/.jpeg/.png, ≤ 5 MB), file `epub` (.epub, ≤ 50 MB). On PUT every text field is required. Omit a file to keep the current one.

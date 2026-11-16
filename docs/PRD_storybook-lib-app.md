@@ -29,7 +29,7 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 2. Logout
 3. Parent and child view modes
 4. View mode toggle with a PIN
-5. Subscriber / non-subscriber badge
+5. Account badge: Subscribed / Free (CR-001)
 6. Book showcase (home)
 7. Book detail page
 8. My Book page
@@ -144,8 +144,8 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 - [ ]  Given a book the user cannot access (user not purchased and has no active subscription), then a lock icon is shown at the bottom right of the cover.
 - [ ]  Given the user has an active subscription, then no paid book shows a lock icon.
 - [ ]  Free books show a “Free” label and never show a lock icon.
-- [ ]  The header shows a Subscriber / Non-subscriber badge at the top left and the Subscription button at the top right, next to the view mode toggle.
-- [ ]  The Subscription button only shown if the account state is Free (Non-Subscriber)
+- [ ]  The header shows the account badge (**Subscribed** / **Free**, CR-001) at the top left and the Subscription button at the top right, next to the view mode toggle.
+- [ ]  The Subscription button only shown if the account state is Free
 - [ ]  Given a book is set to inactive in back-office, then the book does not shown in the digital storybook app.
 - [ ]  The footer shows Home, My Book (middle), and Settings.
 
@@ -157,13 +157,13 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 
 - [ ]  Home shows the same books as Parent view, with cover, title, and age range.
 - [ ]  Price, book description, Buy Now, Checkout, Payment, Subscription button, and Settings are **not** shown.
-- [ ]  Paid books that are not purchased show a lock icon when the account is in the Free (Non-subscriber) state.
+- [ ]  Paid books that are not purchased show a lock icon when the account is in the Free state.
 - [ ]  Free books show a “Free” label and no lock icon.
 - [ ]  The lock icon is placed at the bottom right so it does not cover the main part of the illustration.
 - [ ]  The footer shows Home and My Book.
 - [ ]  Given an unlocked book (free, purchased, or covered by an active subscription), when the child taps it, then the book opens in the Book Viewer.
 - [ ]  Given a locked book, when the child taps it, then the book does not open and a friendly, price-free message is shown (e.g. “Ask your parent to unlock this book”).
-- [ ]  The Subscriber / Non-subscriber badge is still shown at the top left of the header.
+- [ ]  The Subscribed / Free badge is still shown at the top left of the header.
 
 ### US-06 — View Book Detail
 
@@ -200,7 +200,7 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 - [ ]  My Book lists only purchased books, newest first. Free books and books unlocked by the subscription are not listed.
 - [ ]  In Child view, My Book shows cover, title, and age range only (no price).
 - [ ]  Purchased books have no expiry date.
-- [ ]  Purchased books stay in My Book when the account changes between Free and Premium (subscription started, renewed, or cancelled).
+- [ ]  Purchased books stay in My Book when the account changes between Free and Subscribed (subscription started, renewed, or cancelled).
 - [ ]  Given no purchases yet, then an empty state is shown with a button to go to Home.
 
 ### US-09 — Buy a Single Book
@@ -225,7 +225,7 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 **Acceptance criteria:**
 
 - [ ]  Given Parent view and no active subscription, when the parent taps the Subscription button (header) or the subscription prompt (book detail page), then the Subscription page shows the benefits, the monthly price (set by admin), and a Checkout button.
-- [ ]  Given payment succeeds (mocked), then the subscription becomes **Active** with an expiry date one month from the start, the badge changes to **Subscriber**, and all published books are unlocked immediately.
+- [ ]  Given payment succeeds (mocked), then the subscription becomes **Active** with an expiry date one month from the start, the badge changes to **Subscribed**, and all published books are unlocked immediately.
 - [ ]  Given payment fails, then no subscription is created and the parent can retry.
 - [ ]  Given an active subscription, then the Subscription page shows the current plan, next renewal date, and a Cancel button instead of Checkout.
 - [ ]  Given date reached the expiry date, then system will automatically renew the subscription and it will always shows succeeds (mocked).
@@ -237,7 +237,7 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 **Acceptance criteria:**
 
 - [ ]  Given an active subscription, when the parent taps Cancel, then a confirmation dialog states that access to books they did not purchase stops immediately and no refund is given (out of scope).
-- [ ]  Given the parent confirms, then the status changes to **Cancelled** immediately, auto-renewal stops, the badge changes to **Non-subscriber**, and non-owned paid books are locked again.
+- [ ]  Given the parent confirms, then the status changes to **Cancelled** immediately, auto-renewal stops, the badge changes to **Free**, and non-owned paid books are locked again.
 - [ ]  Purchased books stay in My Book after cancelling.
 - [ ]  After cancelling, the Subscription button is shown in the header again so the parent can resubscribe.
 - [ ]  Given the parent closes the dialog without confirming, then the subscription stays **Active**.
@@ -314,7 +314,8 @@ The main users are toddlers (1–3 years old) and preschoolers (3–6 years old)
 
 - [ ]  The admin can set the monthly price (IDR, whole number > 0) and the benefits text.
 - [ ]  Changes are shown on the Subscription page for new subscriptions.
-- [ ]  Active subscriptions keep the price they paid until they expire.
+- [ ]  Active subscriptions keep the price they paid until they expire; the next automatic renewal charges the price current at that moment (CR-001).
+- [ ]  Every price change is recorded in a price history (old price, new price, admin, time) shown on the plan page; saving the same price records nothing (CR-001).
 
 ---
 
@@ -379,7 +380,7 @@ flowchart TD
     F -->|Failed| G[No subscription created]
     G -->|Retry| C
     F -->|Success| H[Subscription = Active<br/>renews in 1 month]
-    H --> I[Badge = Subscriber<br/>All published books unlocked]
+    H --> I[Badge = Subscribed<br/>All published books unlocked]
     I --> J{Renewal date reached<br/>and not cancelled?}
     J -->|Yes| K[Auto-renew - mocked, always succeeds<br/>New Active period created<br/>Previous period = Expired]
     K --> I
@@ -394,7 +395,7 @@ flowchart TD
     C --> D[Confirmation dialog<br/>access stops immediately, no refund]
     D -->|Keep subscription| B
     D -->|Confirm| E[Status = Cancelled<br/>auto-renew stopped]
-    E --> F[Badge = Non-subscriber<br/>Subscription button shown again]
+    E --> F[Badge = Free<br/>Subscription button shown again]
     F --> G[Non-owned paid books locked<br/>Purchased books stay in My Book]
 ```
 
@@ -465,7 +466,7 @@ flowchart TD
 - **Covers first for children.** The lock icon sits at the bottom right and the age range at the top left, so the illustration stays the focus.
 - **Locked vs unlocked is obvious at a glance.** One consistent lock icon (never a price tag on the cover), a “Free” label on free books, and clear buttons on the detail page (Buy Now, Subscribed, Read).
 - **Subscription is the easy path.** Books are bought one at a time, and every locked book’s detail page shows the subscription offer next to Buy Now.
-- **Status is always visible.** The Subscriber / Non-subscriber badge is shown in the header in both views.
+- **Status is always visible.** The Subscribed / Free badge is shown in the header in both views.
 - **Unlock immediately.** After a successful purchase or subscription, content unlocks without a manual refresh.
 - **Tablet- and mobile-first.** Large touch targets (at least 48 × 48 px) for small hands; layouts work in portrait and landscape.
 - **Every action has loading, empty, success, and error states.**

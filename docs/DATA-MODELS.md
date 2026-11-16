@@ -30,8 +30,9 @@
 | `refresh_tokens` | A session | Only the SHA-256 of the token is stored. `revoked_at` is set on logout |
 | `books` | A storybook | `status` is draft/published. `age_type` range ⇒ `age_max > age_min`, plus ⇒ `age_max` null. `epub_content` is never selected in lists |
 | `book_files` | A book's cover | One per book. jpeg/png only |
-| `subscription_plans` | The plan | Single row in the MVP. The latest `updated_at` wins |
-| `subscriptions` | One paid monthly period | `active` → `cancelled` or `expired`. Partial unique index: at most one `active` per user. `renewed_from_id` links the chain |
+| `subscription_plans` | The plan | Single row in the MVP, `code = 'monthly'` (unique). `updated_by` → admin who last changed it |
+| `subscription_plan_price_history` | One price change | `old_price ≠ new_price` (a same-price save writes nothing). `changed_by` → admins (CR-001) |
+| `subscriptions` | One paid monthly period (`price_paid` is locked for that period; a renewal is a new row at the then-current price) | `active` → `cancelled` or `expired`. Partial unique index: at most one `active` per user. `renewed_from_id` links the chain |
 | `book_orders` | A checkout for one book | `pending` → `paid` or `failed`. Never reused after `failed` |
 | `subscription_orders` | A checkout or renewal for the plan | `order_type` is new/renewal. Renewal key is `renewal:<subscription_id>` |
 | `purchases` | Ownership of a book | `UNIQUE (user_id, book_id)`. Survives the book being unpublished or deleted |

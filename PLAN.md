@@ -12,7 +12,8 @@
 - [x] Phase 6: Back office: book CRUD (multipart, files in DB), plan config
 - [x] Phase 7: Tests: unit (rules) + integration (all PRD flows / edge cases, 88% coverage)
 - [x] Phase 8: Hardening: parent token on payment/settings routes (TD-002), pagination (TD-003), Forgot PIN lockout (TD-006), project docs
-- [ ] Phase 9: Analytics events for PRD §13: [docs/PLAN-analytics-events.md](docs/PLAN-analytics-events.md) (proposed, 4 open questions)
+- [x] Phase 9: CR-001 badge (`plan_status`) and plan price changes at next renewal + price history (ADR-010)
+- [ ] Phase 10: Analytics events for PRD §13: [docs/PLAN-analytics-events.md](docs/PLAN-analytics-events.md) (proposed, 4 open questions)
 
 ## Decisions made — do not revisit
 - One repository package (`internal/repositories/library`) so payment transactions can span orders, purchases and subscriptions.

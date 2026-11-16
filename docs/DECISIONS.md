@@ -15,6 +15,7 @@ Product decisions (pricing, subscription rules, PIN gate) live in [PRD §11](PRD
 | 007 | Parent token proves Parent view on payment and settings routes | Accepted |
 | 008 | Offset pagination with `meta.total` | Accepted |
 | 009 | 404 for other users' orders | Accepted |
+| 010 | CR-001: badge and plan price changes fit the existing model | Accepted |
 
 ---
 
@@ -62,3 +63,8 @@ Product decisions (pricing, subscription rules, PIN gate) live in [PRD §11](PRD
 ### ADR-009 — Other users' resources
 **Decision:** Paying someone else's order returns `404 ORDER_NOT_FOUND`, not 403.
 **Why:** It doesn't reveal that the order exists.
+
+### ADR-010 — CR-001 on the existing subscription model
+**Decision:** The badge (`plan_status`) uses the same rule as book access (`status = 'active'`). A plan price change applies at the next **automatic** renewal; there is no user-triggered renew endpoint. Each renewal stays a new period row (no `renewed_at`), duration stays one calendar month (no `duration_days`), the stale-price check runs when the subscription order is created (`expected_price`), and existing endpoint paths are kept. History foreign keys point at `admins`, not `users`.
+**Why:** The PRD requires auto-renew and one history row per period (US-10, US-13); a manual renew while active would charge the new price before `expires_at` (against CR-001 P2); the badge must not say "Free" while books are still unlocked; the frontend contract already uses these paths.
+**Consequence:** CR-001 E-CR5 / T10 (`NO_ACTIVE_SUBSCRIPTION`) do not apply. `is_subscriber` stays next to `plan_status` for older clients.
