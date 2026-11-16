@@ -166,7 +166,21 @@ type orderDTO struct {
 	ID, Status string
 	Price      int
 }
+
+// meDTO is GET /me as far as CR-001 cares: the badge and the pending-price notice.
+type meDTO struct {
+	PlanStatus   string `json:"plan_status"`
+	IsSubscriber bool   `json:"is_subscriber"`
+	Subscription *struct {
+		ID                 string
+		PricePaid          int  `json:"price_paid"`
+		NextRenewalPrice   int  `json:"next_renewal_price"`
+		PriceChangePending bool `json:"price_change_pending"`
+	}
+}
+
 type sub struct {
+	PricePaid  int `json:"price_paid"`
 	ID, Status string
 	OrderType  *string   `json:"order_type"`
 	StartedAt  time.Time `json:"started_at"`
@@ -356,42 +370,79 @@ func TestLibraryEndToEnd(t *testing.T) {
 	}
 
 	// US-10: subscribe. Failed payment creates nothing; success unlocks everything.
-	plan := decode[struct{ Price int }](t, call(t, "GET", "/subscription/plan", parent, nil))
-	r = parentCall(t, "POST", "/subscription-orders", parent, pt, map[string]string{"idempotency_key": "s-1"})
+	plan := decode[struct {
+		Price      int
+		Code, Name string
+	}](t, call(t, "GET", "/subscription/plan", parent, nil))
+	if plan.Code != "monthly" || plan.Name == "" {
+		t.Fatalf("plan = %+v", plan)
+	}
+	// CR-001 T2 / B4: owning a purchased book does not make the account "subscribed"
+	if me := decode[meDTO](t, call(t, "GET", "/me", parent, nil)); me.PlanStatus != "free" || me.IsSubscriber || me.Subscription != nil {
+		t.Fatalf("buyer without subscription: %+v", me)
+	}
+	expect(t, parentCall(t, "POST", "/subscription-orders", parent, pt, map[string]any{"idempotency_key": "s-0"}), 400, "VALIDATION_ERROR") // expected_price required
+	r = parentCall(t, "POST", "/subscription-orders", parent, pt, map[string]any{"idempotency_key": "s-1", "expected_price": plan.Price})
 	expect(t, r, 200, "")
 	subOrder1 := decode[orderDTO](t, r)
 	if subOrder1.Price != plan.Price {
 		t.Fatalf("subscription order price %d, plan %d", subOrder1.Price, plan.Price)
 	}
 	expect(t, parentCall(t, "POST", "/subscription-orders/"+subOrder1.ID+"/pay", parent, pt, map[string]string{"result": "failed"}), 402, "PAYMENT_FAILED")
-	if me := decode[struct {
-		IsSubscriber bool `json:"is_subscriber"`
-	}](t, call(t, "GET", "/me", parent, nil)); me.IsSubscriber {
+	if me := decode[meDTO](t, call(t, "GET", "/me", parent, nil)); me.IsSubscriber || me.PlanStatus != "free" {
 		t.Fatal("failed payment must not subscribe")
 	}
-	r = parentCall(t, "POST", "/subscription-orders", parent, pt, map[string]string{"idempotency_key": "s-2"})
+	r = parentCall(t, "POST", "/subscription-orders", parent, pt, map[string]any{"idempotency_key": "s-2", "expected_price": plan.Price})
 	expect(t, r, 200, "")
 	subOrder2 := decode[orderDTO](t, r)
 	r = parentCall(t, "POST", "/subscription-orders/"+subOrder2.ID+"/pay", parent, pt, map[string]string{"result": "success"})
 	expect(t, r, 200, "")
 	first := decode[sub](t, r)
-	if first.Status != "active" || first.ExpiresAt.Sub(first.StartedAt) < 28*24*time.Hour {
+	if first.Status != "active" || first.ExpiresAt.Sub(first.StartedAt) < 28*24*time.Hour || first.PricePaid != plan.Price {
 		t.Fatalf("subscription = %+v", first)
+	}
+	// CR-001 T1: badge flips to subscribed right after payment; no price change pending yet
+	if me := decode[meDTO](t, call(t, "GET", "/me", parent, nil)); me.PlanStatus != "subscribed" || !me.IsSubscriber ||
+		me.Subscription == nil || me.Subscription.PriceChangePending || me.Subscription.NextRenewalPrice != plan.Price {
+		t.Fatalf("subscriber me = %+v", me)
 	}
 	books = decode[[]bookDTO](t, call(t, "GET", "/books", parent, nil))
 	if findBook(books, bookB).Access != "subscribed" || findBook(books, bookA).Access != "owned" || findBook(books, free).Access != "free" {
 		t.Fatalf("subscriber showcase = %+v", books)
 	}
 	expect(t, call(t, "GET", "/books/"+bookB+"/content", parent, nil), 200, "")
-	expect(t, parentCall(t, "POST", "/book-orders", parent, pt, map[string]string{"book_id": bookB, "idempotency_key": "k-b3"}), 409, "SUBSCRIPTION_ACTIVE") // E2
-	expect(t, parentCall(t, "POST", "/book-orders/"+orderB2.ID+"/pay", parent, pt, map[string]string{"result": "success"}), 409, "SUBSCRIPTION_ACTIVE")      // pending order, now subscribed
-	expect(t, parentCall(t, "POST", "/subscription-orders", parent, pt, map[string]string{"idempotency_key": "s-3"}), 409, "SUBSCRIPTION_ACTIVE")            // E3
+	expect(t, parentCall(t, "POST", "/book-orders", parent, pt, map[string]string{"book_id": bookB, "idempotency_key": "k-b3"}), 409, "SUBSCRIPTION_ACTIVE")                 // E2
+	expect(t, parentCall(t, "POST", "/book-orders/"+orderB2.ID+"/pay", parent, pt, map[string]string{"result": "success"}), 409, "SUBSCRIPTION_ACTIVE")                      // pending order, now subscribed
+	expect(t, parentCall(t, "POST", "/subscription-orders", parent, pt, map[string]any{"idempotency_key": "s-3", "expected_price": plan.Price}), 409, "SUBSCRIPTION_ACTIVE") // E3
 
-	// US-17: plan price change applies to new periods only
-	expect(t, call(t, "PUT", "/admin/subscription-plan", admin, map[string]any{"price": 0, "benefits": "x"}), 400, "VALIDATION_ERROR")
-	expect(t, call(t, "PUT", "/admin/subscription-plan", admin, map[string]any{"price": 59000, "benefits": "All books"}), 200, "")
-	if me := decode[struct{ Subscription sub }](t, call(t, "GET", "/me", parent, nil)); me.Subscription.ID != first.ID {
-		t.Fatalf("active period changed after plan update: %+v", me)
+	// US-17 / CR-001-2: a plan price change applies to new subscriptions and the next renewal only
+	setPlan := func(token string, price any) result {
+		return call(t, "PUT", "/admin/subscription-plan", token, map[string]any{"price": price, "benefits": "All books"})
+	}
+	expect(t, setPlan(admin, 0), 400, "INVALID_PRICE")                                                                     // T8 / E-CR2
+	expect(t, setPlan(admin, -5), 400, "INVALID_PRICE")                                                                    // T8
+	expect(t, call(t, "PUT", "/admin/subscription-plan", admin, map[string]any{"benefits": "x"}), 400, "VALIDATION_ERROR") // price missing
+	expect(t, setPlan(parent, 59000), 403, "FORBIDDEN")                                                                    // T9 / E-CR3
+	expect(t, setPlan(admin, 59000), 200, "")                                                                              // P1
+	if r := setPlan(admin, 59000); r.Status != 200 || decode[struct{ Price int }](t, r).Price != 59000 {                   // E-CR6: same price is a no-op
+		t.Fatalf("same-price update: %d %s", r.Status, r.Body)
+	}
+	expect(t, setPlan(admin, 69000), 200, "") // second change before the renewal (P5 / E-CR4)
+	type change struct {
+		OldPrice  int    `json:"old_price"`
+		NewPrice  int    `json:"new_price"`
+		ChangedBy string `json:"changed_by_name"`
+	}
+	hist := call(t, "GET", "/admin/subscription-plan/history", admin, nil)
+	if h := decode[[]change](t, hist); hist.Meta.Total != 2 || h[0].OldPrice != 59000 || h[0].NewPrice != 69000 ||
+		h[1].OldPrice != plan.Price || h[1].NewPrice != 59000 || h[0].ChangedBy == "" {
+		t.Fatalf("price history = %+v meta %+v", h, hist.Meta)
+	}
+	expect(t, call(t, "GET", "/admin/subscription-plan/history", parent, nil), 403, "FORBIDDEN")
+	// T4 / P2: the running period keeps its price; /me announces the next renewal price
+	if me := decode[meDTO](t, call(t, "GET", "/me", parent, nil)); me.Subscription == nil || me.Subscription.ID != first.ID ||
+		me.Subscription.PricePaid != plan.Price || me.Subscription.NextRenewalPrice != 69000 || !me.Subscription.PriceChangePending {
+		t.Fatalf("subscriber after price change: %+v", me)
 	}
 
 	// US-13: auto-renew creates a new active period and expires the old one
@@ -407,8 +458,12 @@ func TestLibraryEndToEnd(t *testing.T) {
 	}
 	periods := decode[[]sub](t, call(t, "GET", "/subscriptions", parent, nil))
 	if len(periods) != 2 || periods[0].Status != "active" || *periods[0].OrderType != "renewal" ||
-		periods[1].Status != "expired" || *periods[1].OrderType != "new" || !periods[0].StartedAt.Equal(periods[1].ExpiresAt) {
+		periods[1].Status != "expired" || *periods[1].OrderType != "new" || !periods[0].StartedAt.Equal(periods[1].ExpiresAt) ||
+		periods[0].PricePaid != 69000 || periods[1].PricePaid != plan.Price { // T5 / E-CR4: renewal charges the latest price
 		t.Fatalf("subscription history = %+v", periods)
+	}
+	if me := decode[meDTO](t, call(t, "GET", "/me", parent, nil)); me.Subscription == nil || me.Subscription.PriceChangePending {
+		t.Fatalf("pending flag must clear after renewal: %+v", me)
 	}
 
 	// US-11 / E4 / E14: cancel locks non-owned books immediately, purchases stay
@@ -421,6 +476,29 @@ func TestLibraryEndToEnd(t *testing.T) {
 	expect(t, call(t, "GET", "/books/"+bookB+"/content", parent, nil), 403, "BOOK_LOCKED")
 	if n, _ := renewer.RenewDue(); n != 0 {
 		t.Fatal("cancelled subscription must not renew")
+	}
+	if me := decode[meDTO](t, call(t, "GET", "/me", parent, nil)); me.PlanStatus != "free" || me.Subscription != nil { // B3
+		t.Fatalf("cancelled me = %+v", me)
+	}
+
+	// CR-001 T7 / E-CR1: the paywall showed an old price -> 409, the app re-reads the plan
+	expect(t, parentCall(t, "POST", "/subscription-orders", parent2, pt2, map[string]any{"idempotency_key": "p2-s1", "expected_price": plan.Price}), 409, "PRICE_CHANGED")
+	// T6 / P3: a new subscriber pays the new price
+	r = parentCall(t, "POST", "/subscription-orders", parent2, pt2, map[string]any{"idempotency_key": "p2-s2", "expected_price": 69000})
+	expect(t, r, 200, "")
+	p2order := decode[orderDTO](t, r)
+	if p2order.Price != 69000 {
+		t.Fatalf("new subscriber order = %+v", p2order)
+	}
+	r = parentCall(t, "POST", "/subscription-orders/"+p2order.ID+"/pay", parent2, pt2, map[string]string{"result": "success"})
+	expect(t, r, 200, "")
+	if s := decode[sub](t, r); s.PricePaid != 69000 {
+		t.Fatalf("new subscriber period = %+v", s)
+	}
+	// T3: an expired subscription shows "free"
+	holder.Sql.Exec(`UPDATE subscriptions SET status = 'expired' WHERE id = ?`, decode[sub](t, r).ID)
+	if me := decode[meDTO](t, call(t, "GET", "/me", parent2, nil)); me.PlanStatus != "free" || me.IsSubscriber {
+		t.Fatalf("expired me = %+v", me)
 	}
 
 	// US-08 / E5: soft delete hides from the shelf, owners keep it
